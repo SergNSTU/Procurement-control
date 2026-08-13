@@ -1,0 +1,15 @@
+[project]
+name = "unirec-rrfq-pricer"
+version = "0.1.0"
+description = "RRFQ price prefill tool for electronics procurement"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.scripts]
+rrfq = "rrfq_app.cli:main"
+rrfq-web = "rrfq_app.web:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

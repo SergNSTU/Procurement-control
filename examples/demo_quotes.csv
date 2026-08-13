@@ -1,0 +1,3 @@
+row,value,offer_pn,offer_mfg,supplier,currency,unit_price,pack_qty,confidence
+49,TMS320F28069PZ,TMS320F28069PZ,TI,LCSC,USD,12.34,50,0.95
+50,CA-IS3641HW,CA-IS3641HW,Chipanalog,RF Manual,RUB,120,25,0.80

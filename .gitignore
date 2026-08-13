@@ -1,0 +1,20 @@
+# Local/runtime data
+data/
+app_data/
+outputs/
+_archive/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Python and Node tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+
+# Local exports and temporary source files
+compel_cart_*.html
+compel_cart_*.csv
+*.tmp
