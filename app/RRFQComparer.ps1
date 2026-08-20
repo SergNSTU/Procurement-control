@@ -25,6 +25,8 @@ $script:LastAnalysis = $null
 $script:LastPreviewGrid = $null
 $script:SqliteLoaded = $false
 $script:PurchaseDbPath = $null
+$script:NotificationsEnabled = $true
+$script:BitrixIntegrationEnabled = $false
 
 $bitrixIntegrationPath = Join-Path $PSScriptRoot 'BitrixIntegration.ps1'
 if (Test-Path -LiteralPath $bitrixIntegrationPath -PathType Leaf) {
@@ -2581,6 +2583,20 @@ WHERE source = @source AND source_id = @source_id
         '@due_kind' = $DueKind
         '@due_date' = $DueDate
     }
+}
+
+function Get-PurchaseBooleanSetting {
+    param(
+        [string]$Key,
+        [bool]$DefaultValue
+    )
+
+    $rawValue = ([string](Get-PurchaseSetting $Key)).Trim().ToLowerInvariant()
+    if ($rawValue -in @('1', 'true', 'yes')) { return $true }
+    if ($rawValue -in @('0', 'false', 'no')) { return $false }
+
+    Set-PurchaseSetting $Key ($(if ($DefaultValue) { '1' } else { '0' }))
+    return $DefaultValue
 }
 
 function Set-NotificationState {
@@ -6592,7 +6608,16 @@ $pageHost.Controls.Add($bitrixPage)
     $btnBitrixRefresh.Width = 140
     $btnBitrixRefresh.Height = 32
     Set-PrimaryButtonLook $btnBitrixRefresh
+    $btnBitrixRefresh.Enabled = $false
     $bitrixToolbar.Controls.Add($btnBitrixRefresh)
+
+    $chkBitrixIntegrationEnabled = New-Object Windows.Forms.CheckBox
+    $chkBitrixIntegrationEnabled.Text = 'Подтягивание из Bitrix включено'
+    $chkBitrixIntegrationEnabled.AutoSize = $true
+    $chkBitrixIntegrationEnabled.Height = 32
+    $chkBitrixIntegrationEnabled.Margin = New-Object Windows.Forms.Padding(12, 6, 6, 0)
+    $chkBitrixIntegrationEnabled.Checked = $false
+    $bitrixToolbar.Controls.Add($chkBitrixIntegrationEnabled)
 
     $bitrixStatusLabel = New-Object Windows.Forms.Label
     $bitrixStatusLabel.Text = ''
@@ -6673,6 +6698,11 @@ $pageHost.Controls.Add($bitrixPage)
 
     $btnBitrixRefresh.Add_Click({
 
+        if (-not $script:BitrixIntegrationEnabled) {
+            $bitrixStatusLabel.Text = 'Подтягивание из Bitrix отключено.'
+            return
+        }
+
         $btnBitrixRefresh.Enabled = $false
         $bitrixStatusLabel.Text = [string][char]0x0417 + [string][char]0x0430 + [string][char]0x0433 + [string][char]0x0440 + [string][char]0x0443 + [string][char]0x0437 + [string][char]0x043A + [string][char]0x0430 + '...'
         $bitrixGrid.Rows.Clear()
@@ -6734,7 +6764,7 @@ $pageHost.Controls.Add($bitrixPage)
         } catch {
             $bitrixStatusLabel.Text = [string][char]0x041E + [string][char]0x0448 + [string][char]0x0438 + [string][char]0x0431 + [string][char]0x043A + [string][char]0x0430 + ': ' + $_.Exception.Message
         }
-        $btnBitrixRefresh.Enabled = $true
+        $btnBitrixRefresh.Enabled = [bool]$script:BitrixIntegrationEnabled
     })
 
     $bitrixGrid.Add_CellDoubleClick({
@@ -6750,9 +6780,20 @@ $pageHost.Controls.Add($bitrixPage)
     $bitrixTimer = New-Object Windows.Forms.Timer
     $bitrixTimer.Interval = 30 * 60 * 1000
     $bitrixTimer.Add_Tick({
-        if ($btnBitrixRefresh.Enabled) { $btnBitrixRefresh.PerformClick() }
+        if ($script:BitrixIntegrationEnabled -and $btnBitrixRefresh.Enabled) { $btnBitrixRefresh.PerformClick() }
     })
-    $bitrixTimer.Start()
+    $chkBitrixIntegrationEnabled.Add_CheckedChanged({
+        $script:BitrixIntegrationEnabled = [bool]$chkBitrixIntegrationEnabled.Checked
+        $btnBitrixRefresh.Enabled = [bool]$script:BitrixIntegrationEnabled
+        if ($script:BitrixIntegrationEnabled) {
+            $bitrixStatusLabel.Text = 'Подтягивание из Bitrix включено. Нажмите кнопку обновления.'
+            $bitrixTimer.Start()
+        } else {
+            $bitrixTimer.Stop()
+            $bitrixGrid.Rows.Clear()
+            $bitrixStatusLabel.Text = 'Подтягивание из Bitrix отключено.'
+        }
+    })
 
     $purchasePage = New-Object Windows.Forms.Panel
     $purchasePage.Dock = 'Fill'
@@ -7032,6 +7073,7 @@ $pageHost.Controls.Add($bitrixPage)
     }
 
     function Show-NextNotification {
+        if (-not $script:NotificationsEnabled) { return }
         if ($null -ne $script:ActiveNotificationCard -or $script:NotificationQueue.Count -eq 0) { return }
         $notification = $script:NotificationQueue.Dequeue()
         $script:ActiveNotification = $notification
@@ -7145,6 +7187,7 @@ $pageHost.Controls.Add($bitrixPage)
     }
 
     function Check-Notifications {
+        if (-not $script:NotificationsEnabled) { return }
         if ($script:NotificationChecking) { return }
         if ($null -ne $script:ActiveNotificationCard -or $script:NotificationQueue.Count -gt 0) {
             Show-NextNotification
@@ -7545,6 +7588,11 @@ $pageHost.Controls.Add($bitrixPage)
     $quotePanel.Controls.Add($quoteDetailsGrid, 0, 1)
 
     Initialize-PurchaseStore
+    $script:NotificationsEnabled = Get-PurchaseBooleanSetting 'notifications.enabled' $true
+    # Bitrix access is deliberately disabled on every fresh application start.
+    $script:BitrixIntegrationEnabled = $false
+    $chkBitrixIntegrationEnabled.Checked = $false
+    $bitrixStatusLabel.Text = 'Подтягивание из Bitrix отключено.'
 
     function Save-GridColumnWidths {
         param($Grid, [string]$SettingKey)
@@ -8448,19 +8496,20 @@ $pageHost.Controls.Add($bitrixPage)
     Set-SecondaryButtonLook $btnReceiptArrived
     $remindersToolbar.Controls.Add($btnReceiptArrived)
 
-    $btnOpenReminderTarget = New-Object Windows.Forms.Button
-    $btnOpenReminderTarget.Text = 'Открыть напоминание'
-    $btnOpenReminderTarget.Width = 130
-    $btnOpenReminderTarget.Height = 30
-    Set-SecondaryButtonLook $btnOpenReminderTarget
-    $remindersToolbar.Controls.Add($btnOpenReminderTarget)
-
     $btnRefreshReminders = New-Object Windows.Forms.Button
     $btnRefreshReminders.Text = 'Обновить'
     $btnRefreshReminders.Width = 100
     $btnRefreshReminders.Height = 30
     Set-SecondaryButtonLook $btnRefreshReminders
     $remindersToolbar.Controls.Add($btnRefreshReminders)
+
+    $chkNotificationsEnabled = New-Object Windows.Forms.CheckBox
+    $chkNotificationsEnabled.Text = 'Уведомления включены'
+    $chkNotificationsEnabled.AutoSize = $true
+    $chkNotificationsEnabled.Height = 30
+    $chkNotificationsEnabled.Margin = New-Object Windows.Forms.Padding(10, 5, 8, 0)
+    $chkNotificationsEnabled.Checked = [bool]$script:NotificationsEnabled
+    $remindersToolbar.Controls.Add($chkNotificationsEnabled)
 
     $remindersSearchLabel = New-Object Windows.Forms.Label
     $remindersSearchLabel.Text = 'Поиск по сделке:'
@@ -10591,7 +10640,7 @@ Outlook
         } catch { [Windows.Forms.MessageBox]::Show($form, $_.Exception.Message, 'Сравнение Excel') | Out-Null }
     })
     $btnNavRrfq.Add_Click({ Show-AppPage 'RRFQ' })
-$btnNavBitrix.Add_Click({ Show-AppPage 'Bitrix'; if ($bitrixGrid.Rows.Count -eq 0) { $btnBitrixRefresh.PerformClick() } })
+    $btnNavBitrix.Add_Click({ Show-AppPage 'Bitrix'; if ($script:BitrixIntegrationEnabled -and $bitrixGrid.Rows.Count -eq 0) { $btnBitrixRefresh.PerformClick() } })
     $btnNavPurchase.Add_Click({
         Refresh-PurchaseAll
         Show-AppPage 'Purchase'
@@ -10725,11 +10774,6 @@ $btnNavBitrix.Add_Click({ Show-AppPage 'Bitrix'; if ($bitrixGrid.Rows.Count -eq 
     $btnRefreshPurchase.Add_Click({ Refresh-PurchaseAll })
     $btnArchiveDeal.Add_Click({ Toggle-SelectedPurchaseDealArchive })
     $btnDeleteDeal.Add_Click({ Remove-SelectedPurchaseDeal })
-    $btnOpenReminderTarget.Add_Click({
-        try { Open-SelectedReminderTarget } catch {
-            [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Напоминания') | Out-Null
-        }
-    })
     $remindersGrid.Add_CellDoubleClick({
         try { Open-SelectedReminderTarget } catch {
             [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Напоминания') | Out-Null
@@ -11530,12 +11574,25 @@ $btnNavBitrix.Add_Click({ Show-AppPage 'Bitrix'; if ($bitrixGrid.Rows.Count -eq 
     $notificationTimer = New-Object Windows.Forms.Timer
     $notificationTimer.Interval = 60000
     $notificationTimer.Add_Tick({ Check-Notifications })
-    $notificationTimer.Start()
+    $chkNotificationsEnabled.Add_CheckedChanged({
+        $script:NotificationsEnabled = [bool]$chkNotificationsEnabled.Checked
+        Set-PurchaseSetting 'notifications.enabled' ($(if ($script:NotificationsEnabled) { '1' } else { '0' }))
+        if ($script:NotificationsEnabled) {
+            $notificationTimer.Start()
+            Check-Notifications
+        } else {
+            $notificationTimer.Stop()
+            $script:NotificationQueue.Clear()
+            $script:NotificationKeys.Clear()
+            Close-NotificationCard
+        }
+    })
+    if ($script:NotificationsEnabled) { $notificationTimer.Start() }
     $form.Add_FormClosed({
         $notificationTimer.Stop()
         Close-NotificationCard
     })
-    $form.Add_Shown({ Check-Notifications })
+    $form.Add_Shown({ if ($script:NotificationsEnabled) { Check-Notifications } })
 
     Apply-ControlTreeLook $form
     $navPanel.BackColor = Get-UiColor 'Surface'
