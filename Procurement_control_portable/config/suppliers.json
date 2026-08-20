@@ -1,0 +1,13 @@
+{
+  "Suppliers": [
+    { "Name": "Ben", "Aliases": [ "ben", "бен" ] },
+    { "Name": "BMZ", "Aliases": [ "bmz", "бмз" ] },
+    { "Name": "HNN", "Aliases": [ "hnn" ] },
+    { "Name": "CPR", "Aliases": [ "cpr" ] },
+    { "Name": "Компэл", "Aliases": [ "compel", "компэл", "компел" ] },
+    { "Name": "Промэлектроника", "Aliases": [ "promelec", "promelektronika", "промэлектроника" ] },
+    { "Name": "Др.", "Aliases": [ "other", "др", "другой" ] }
+  ],
+  "OtherSupplier": "Др.",
+  "VatDivisor": 1.22
+}

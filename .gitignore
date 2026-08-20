@@ -1,0 +1,21 @@
+# User data and generated files
+_backups/
+Procurement_control_portable/data/
+*.sqlite
+*.sqlite-*
+*.log
+
+# Local diagnostics and screenshots
+Procurement_control_portable/app/_*.ps1
+Procurement_control_portable/app/_*.png
+Procurement_control_portable/app/*.bak*
+Procurement_control_portable/app/*.corrupted*
+Procurement_control_portable/app/*.before_*.bak
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.tmp
+*.swp
+Thumbs.db
+Desktop.ini
