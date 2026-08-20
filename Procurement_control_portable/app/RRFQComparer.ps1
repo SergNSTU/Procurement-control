@@ -1753,7 +1753,11 @@ function Load-SqliteProvider {
         $env:PATH = "$archDir;$sqliteDir;$env:PATH"
     }
 
-    Add-Type -Path $sqliteDll
+    try {
+        Add-Type -Path $sqliteDll
+    } catch {
+        throw "Не удалось загрузить встроенный SQLite-компонент. Установите Microsoft Visual C++ Redistributable 2015–2022 (x64 и x86), затем перезапустите приложение. Технические детали: $($_.Exception.Message)"
+    }
     $script:SqliteLoaded = $true
 }
 

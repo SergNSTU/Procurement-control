@@ -1,5 +1,4 @@
-#requires -Version 5.1
-param(
+﻿param(
     [switch]$UiSmokeTest,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
@@ -37,6 +36,20 @@ function Write-StartupLog {
 }
 
 try {
+    if ($PSVersionTable.PSVersion -lt [Version]'5.1') {
+        throw 'Требуется Windows PowerShell 5.1 или новее.'
+    }
+
+    $netFrameworkRelease = $null
+    try {
+        $netFrameworkRelease = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release -ErrorAction Stop).Release
+    } catch {
+        $netFrameworkRelease = $null
+    }
+    if ($null -eq $netFrameworkRelease -or [int]$netFrameworkRelease -lt 393295) {
+        throw '.NET Framework 4.6 или новее не найден. Установите .NET Framework и повторите запуск.'
+    }
+
     if (-not (Test-Path -LiteralPath $MainScript -PathType Leaf)) {
         throw "Main script was not found: $MainScript"
     }
@@ -82,4 +95,3 @@ try {
     }
     exit 1
 }
-
