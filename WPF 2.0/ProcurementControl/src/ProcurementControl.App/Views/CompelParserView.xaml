@@ -1,0 +1,197 @@
+<UserControl x:Class="ProcurementControl.Views.CompelParserView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+
+    <UserControl.Resources>
+        <!-- Карточка метрики (аналог $metricBox, строки 2851-2877) -->
+        <Style x:Key="MetricCard" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Margin" Value="0,4,8,4"/>
+            <Setter Property="Padding" Value="6,6"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="46"/>
+            <RowDefinition Height="78"/>
+            <RowDefinition Height="30"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Тулбар: путь к HTML + кнопки управления (строки 2780-2833) -->
+        <DockPanel Grid.Row="0" VerticalAlignment="Center" LastChildFill="True">
+            <TextBlock DockPanel.Dock="Left" Text="HTML:"
+                       Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <Button DockPanel.Dock="Right" Content="Открыть папку"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding OpenExportFolderCommand}"
+                    Width="125" Height="30" Margin="8,0,0,0"/>
+            <Button DockPanel.Dock="Right" Content="Выгрузить Excel"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ExportExcelCommand}"
+                    Width="135" Height="30" Margin="8,0,0,0"/>
+            <Button DockPanel.Dock="Right" Content="Разобрать"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Command="{Binding ParseCommand}"
+                    Width="110" Height="30" Margin="8,0,0,0"/>
+            <Button DockPanel.Dock="Right" Content="Выбрать HTML"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ChooseHtmlCommand}"
+                    Width="130" Height="30" Margin="8,0,0,0"/>
+            <TextBox Text="{Binding HtmlPath, Mode=OneWay}"
+                     IsReadOnly="True"
+                     Height="30" VerticalContentAlignment="Center"
+                     Background="{StaticResource SurfaceBrush}"
+                     Foreground="{StaticResource TextBrush}"
+                     BorderBrush="{StaticResource SecondaryBorderBrush}"
+                     Padding="6,0" FontFamily="Segoe UI" FontSize="12"/>
+        </DockPanel>
+
+        <!-- Шесть карточек метрик (строки 2835-2878) -->
+        <UniformGrid Grid.Row="1" Columns="6">
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding TotalRowsText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Строк всего"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding PricedRowsText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Строк с ценой"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding MissingRowsText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Без предложения"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SelectedTotalUsdText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="USD по строкам"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding CheapTotalUsdText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="USD итог по цене"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCard}">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{Binding OptimalTotalUsdText}"
+                               FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="USD итог по сроку"
+                               Foreground="{StaticResource MutedBrush}" FontSize="12"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- Строка статуса: серая, ошибка — красная (строки 2880-2885, 2927-2931) -->
+        <TextBlock Grid.Row="2"
+                   Text="{Binding StatusText}"
+                   VerticalAlignment="Center"
+                   FontFamily="Segoe UI" FontSize="12">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsStatusError}" Value="True">
+                            <Setter Property="Foreground" Value="{StaticResource DangerTextBrush}"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <!-- Сетка позиций (строки 2887-2920) -->
+        <DataGrid Grid.Row="3"
+                  ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  Background="{StaticResource SurfaceBrush}"
+                  RowBackground="{StaticResource SurfaceBrush}"
+                  AlternatingRowBackground="{StaticResource SurfaceAltBrush}"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="{StaticResource LineBrush}"
+                  BorderThickness="1"
+                  BorderBrush="{StaticResource LineBrush}"
+                  FontFamily="Segoe UI" FontSize="12"
+                  Foreground="{StaticResource TextBrush}"
+                  ColumnHeaderHeight="36"
+                  RowHeight="32">
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                    <Setter Property="Padding" Value="8,0"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
+            <!-- Строки без подобранной суммы — жёлтые (строки 2971-2973) -->
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasTotal}" Value="False">
+                            <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="N" Binding="{Binding Number}" Width="58"/>
+                <DataGridTextColumn Header="Исходное наименование" Binding="{Binding SourceName}" Width="230"/>
+                <DataGridTextColumn Header="Подобранный товар" Binding="{Binding MatchedPart}" Width="250"/>
+                <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="140"/>
+                <DataGridTextColumn Header="Срок" Binding="{Binding LeadTime}" Width="105"/>
+                <DataGridTextColumn Header="Кол-во" Binding="{Binding Quantity}" Width="88"/>
+                <DataGridTextColumn Header="Цена за шт" Binding="{Binding UnitPriceText}" Width="105"/>
+                <DataGridTextColumn Header="Валюта" Binding="{Binding Currency}" Width="80"/>
+                <DataGridTextColumn Header="Сумма" Binding="{Binding TotalText}" Width="110"/>
+                <DataGridTextColumn Header="Валюта суммы" Binding="{Binding TotalCurrency}" Width="110"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</UserControl>

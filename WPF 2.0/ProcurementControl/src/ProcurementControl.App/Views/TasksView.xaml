@@ -1,0 +1,131 @@
+<UserControl x:Class="ProcurementControl.Views.TasksView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="140"/>
+        </Grid.RowDefinitions>
+
+        <!-- Тулбар: поиск, обновление, пометка о режиме чтения -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="Поиск сделки:"
+                       Foreground="{StaticResource TextBrush}" FontSize="12"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                     Width="220" Height="30"
+                     FontFamily="Segoe UI" FontSize="12"
+                     VerticalContentAlignment="Center"
+                     Background="{StaticResource SurfaceBrush}"
+                     BorderBrush="{StaticResource LineBrush}"
+                     Foreground="{StaticResource TextBrush}"/>
+            <Button Content="Обновить"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ReloadCommand}"
+                    Height="30" Margin="12,0,0,0"/>
+            <TextBlock Text="{Binding ReadOnlyNotice}"
+                       Foreground="{StaticResource MutedBrush}" FontSize="12"
+                       VerticalAlignment="Center" Margin="16,0,0,0"/>
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="{StaticResource DangerTextBrush}"
+                       FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0"/>
+        </StackPanel>
+
+        <!-- Сетка задач (аналог $componentsGrid) -->
+        <DataGrid Grid.Row="1"
+                  Margin="0,12,0,0"
+                  ItemsSource="{Binding Tasks}"
+                  SelectedItem="{Binding SelectedTask, Mode=TwoWay}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  CanUserSortColumns="True"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  Background="{StaticResource SurfaceBrush}"
+                  RowBackground="{StaticResource SurfaceBrush}"
+                  AlternatingRowBackground="{StaticResource SurfaceAltBrush}"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="{StaticResource LineBrush}"
+                  BorderThickness="1"
+                  BorderBrush="{StaticResource LineBrush}"
+                  FontFamily="Segoe UI" FontSize="12"
+                  Foreground="{StaticResource TextBrush}"
+                  ColumnHeaderHeight="36"
+                  RowHeight="30"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                    <Setter Property="Padding" Value="8,0"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
+            <DataGrid.CellStyle>
+                <Style TargetType="DataGridCell">
+                    <Setter Property="Padding" Value="8,0"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="{StaticResource InfoBrush}"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.CellStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Дата входа" Binding="{Binding EntryDate}" Width="96"/>
+                <DataGridTextColumn Header="Сделка" Binding="{Binding DealNumber}" Width="170"/>
+                <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="145"/>
+                <DataGridTextColumn Header="Этап" Binding="{Binding Stage}" Width="170"/>
+                <DataGridTextColumn Header="Описание" Binding="{Binding Description}" Width="260"/>
+                <DataGridTextColumn Header="След.действие" Binding="{Binding NextAction}" Width="230"/>
+                <DataGridTextColumn Header="Напоминание" Binding="{Binding ReminderDate}" Width="112"/>
+                <DataGridTextColumn Header="Дедлайн" Binding="{Binding DeadlineDate}" Width="112"/>
+                <DataGridTextColumn Header="Приоритет" Binding="{Binding Priority}" Width="92"/>
+                <DataGridTextColumn Header="Период" Binding="{Binding Period}" Width="110"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <GridSplitter Grid.Row="2" Height="6" HorizontalAlignment="Stretch"
+                      Background="Transparent"/>
+
+        <!-- Заголовок панели записей -->
+        <Grid Grid.Row="3" Margin="0,4,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Записи по сделке"
+                       FontFamily="Segoe UI" FontWeight="Bold" FontSize="12"
+                       Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text="{Binding CountText}"
+                       Foreground="{StaticResource MutedBrush}" FontSize="11"
+                       VerticalAlignment="Center"/>
+        </Grid>
+
+        <!-- Записи выбранной задачи (только чтение) -->
+        <TextBox Grid.Row="4"
+                 Text="{Binding SelectedNotes, Mode=OneWay}"
+                 IsReadOnly="True"
+                 TextWrapping="Wrap"
+                 AcceptsReturn="True"
+                 VerticalScrollBarVisibility="Auto"
+                 FontFamily="Segoe UI" FontSize="13"
+                 Background="{StaticResource SurfaceBrush}"
+                 BorderBrush="{StaticResource LineBrush}"
+                 Foreground="{StaticResource TextBrush}"/>
+    </Grid>
+</UserControl>

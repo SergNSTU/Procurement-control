@@ -1,0 +1,96 @@
+<Window x:Class="ProcurementControl.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:nav="clr-namespace:ProcurementControl.Navigation"
+        Title="Procurement control"
+        Width="1480" Height="900"
+        MinWidth="1280" MinHeight="760"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI"
+        Background="{StaticResource CanvasBrush}">
+
+    <Window.Resources>
+        <!-- Шаблон пункта-страницы: иконка (Segoe MDL2) + подпись -->
+        <DataTemplate x:Key="NavPageTemplate">
+            <StackPanel Orientation="Horizontal" Height="42">
+                <TextBlock Text="{Binding IconGlyph}"
+                           FontFamily="Segoe MDL2 Assets"
+                           FontSize="15"
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0"/>
+                <TextBlock Text="{Binding Title}"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- Шаблон разделителя (содержимое не нужно — рисуется в стиле контейнера) -->
+        <DataTemplate x:Key="NavDividerTemplate">
+            <Border Height="9"/>
+        </DataTemplate>
+
+        <nav:NavItemTemplateSelector x:Key="NavTemplateSelector"
+                                     PageTemplate="{StaticResource NavPageTemplate}"
+                                     DividerTemplate="{StaticResource NavDividerTemplate}"/>
+        <nav:NavItemContainerStyleSelector x:Key="NavContainerStyleSelector"
+                                           PageStyle="{StaticResource NavItemStyle}"
+                                           DividerStyle="{StaticResource NavDividerContainerStyle}"/>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="240"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Левая навигационная панель (аналог navPanel, ширина 240) -->
+        <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}">
+            <DockPanel>
+                <!-- Заголовок приложения (аналог navTitle) -->
+                <TextBlock DockPanel.Dock="Top"
+                           Text="Procurement control"
+                           FontSize="15"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextBrush}"
+                           VerticalAlignment="Center"
+                           Margin="16,16,16,12"/>
+
+                <!-- Подсказка внизу (аналог navHint) -->
+                <TextBlock DockPanel.Dock="Bottom"
+                           Text="Данные закупки хранятся внутри папки приложения."
+                           FontSize="11"
+                           Foreground="{StaticResource MutedBrush}"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Bottom"
+                           Margin="16,0,16,14"/>
+
+                <!-- Список разделов -->
+                <ListBox ItemsSource="{Binding NavItems}"
+                         SelectedItem="{Binding SelectedNavItem, Mode=TwoWay}"
+                         ItemTemplateSelector="{StaticResource NavTemplateSelector}"
+                         ItemContainerStyleSelector="{StaticResource NavContainerStyleSelector}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Margin="8,0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Разделительная линия между колонками -->
+        <Border Grid.Column="0" Width="1" HorizontalAlignment="Right"
+                Background="{StaticResource LineBrush}"/>
+
+        <!-- Правая область: заголовок раздела + активная страница -->
+        <DockPanel Grid.Column="1">
+            <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1"
+                    Padding="18,12">
+                <TextBlock Text="{Binding CurrentPageTitle}"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource TextBrush}"/>
+            </Border>
+
+            <ContentControl Content="{Binding CurrentViewModel}"/>
+        </DockPanel>
+    </Grid>
+</Window>

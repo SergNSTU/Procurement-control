@@ -1,0 +1,22 @@
+<UserControl x:Class="ProcurementControl.Views.PlaceholderView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+    <Grid>
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="460">
+            <TextBlock Text="{Binding Title}"
+                       FontFamily="Segoe UI"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource TextBrush}"
+                       TextAlignment="Center"/>
+            <TextBlock Margin="0,14,0,0"
+                       FontFamily="Segoe UI"
+                       FontSize="13"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       Foreground="{StaticResource MutedBrush}"
+                       Text="Этот раздел ещё не перенесён в WPF-версию. Он продолжает работать в оригинальном PowerShell-приложении."/>
+        </StackPanel>
+    </Grid>
+</UserControl>

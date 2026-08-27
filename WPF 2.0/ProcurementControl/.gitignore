@@ -1,0 +1,19 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# Visual Studio / Rider user state
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test and coverage outputs
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Local publish artifacts
+publish/

@@ -1,0 +1,332 @@
+<UserControl x:Class="ProcurementControl.Views.PurchaseView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+
+    <UserControl.Resources>
+        <!-- Плитка метрики (аналог New-CockpitMetricCard) -->
+        <Style x:Key="MetricTile" TargetType="Border">
+            <Setter Property="Padding" Value="14,10"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="MinWidth" Value="170"/>
+        </Style>
+        <Style x:Key="TileCaption" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI Semibold"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+        </Style>
+        <Style x:Key="TileValue" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="20"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+        </Style>
+        <Style x:Key="TileHint" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+        </Style>
+
+        <!-- Фон строки сделки: перенос правил раскраски $dealsGrid -->
+        <Style x:Key="DealRowStyle" TargetType="DataGridRow">
+            <Setter Property="Background" Value="{StaticResource DangerBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RowState}" Value="Pause">
+                    <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding RowState}" Value="Archived">
+                    <Setter Property="Background" Value="{StaticResource SurfaceAltBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding RowState}" Value="Success">
+                    <Setter Property="Background" Value="{StaticResource SuccessBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="GridHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+        </Style>
+        <Style x:Key="GridCellStyle" TargetType="DataGridCell">
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource InfoBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="220"/>
+        </Grid.RowDefinitions>
+
+        <!-- Карточки метрик -->
+        <WrapPanel Grid.Row="0">
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource InfoBrush}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="Активные сделки"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding ActiveCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="Активные, отслеживание, Китай и задачи"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource DangerBrush}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="Просрочено"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding OverdueCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="Нужна реакция"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource WarnBrush}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="На сегодня"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding DueTodayCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="Ожидается поступление"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource AttentionBrush}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="Требуют внимания"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding AttentionCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="Нужна ручная проверка"/>
+                </StackPanel>
+            </Border>
+        </WrapPanel>
+
+        <!-- Тулбар: поиск, фильтр, обновление, пометка о режиме чтения -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,12,0,0">
+            <TextBlock Text="Поиск:"
+                       Foreground="{StaticResource TextBrush}" FontSize="12"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                     Width="170" Height="30"
+                     FontFamily="Segoe UI" FontSize="12"
+                     VerticalContentAlignment="Center"
+                     Background="{StaticResource SurfaceBrush}"
+                     BorderBrush="{StaticResource LineBrush}"
+                     Foreground="{StaticResource TextBrush}"/>
+            <TextBlock Text="Фильтр:"
+                       Foreground="{StaticResource TextBrush}" FontSize="12"
+                       VerticalAlignment="Center" Margin="12,0,8,0"/>
+            <ComboBox ItemsSource="{Binding Filters}"
+                      SelectedItem="{Binding SelectedFilter}"
+                      Width="180" Height="30"
+                      FontFamily="Segoe UI" FontSize="12"
+                      VerticalContentAlignment="Center"/>
+            <Button Content="Обновить"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ReloadCommand}"
+                    Height="30" Margin="12,0,0,0"/>
+            <TextBlock Text="{Binding ReadOnlyNotice}"
+                       Foreground="{StaticResource MutedBrush}" FontSize="12"
+                       VerticalAlignment="Center" Margin="16,0,0,0"/>
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="{StaticResource DangerTextBrush}"
+                       FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0"/>
+        </StackPanel>
+
+        <!-- Сетка сделок -->
+        <DataGrid Grid.Row="2"
+                  Margin="0,12,0,0"
+                  ItemsSource="{Binding Deals}"
+                  SelectedItem="{Binding SelectedDeal, Mode=TwoWay}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  CanUserSortColumns="True"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  RowStyle="{StaticResource DealRowStyle}"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="{StaticResource LineBrush}"
+                  BorderThickness="1"
+                  BorderBrush="{StaticResource LineBrush}"
+                  FontFamily="Segoe UI" FontSize="12"
+                  Foreground="{StaticResource TextBrush}"
+                  ColumnHeaderStyle="{StaticResource GridHeaderStyle}"
+                  CellStyle="{StaticResource GridCellStyle}"
+                  ColumnHeaderHeight="36"
+                  RowHeight="30"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Сделка" Binding="{Binding DealNumber}" Width="190"/>
+                <DataGridTextColumn Header="Кол-во плат" Binding="{Binding BoardCount}" Width="92"/>
+                <DataGridTextColumn Header="Клиент" Binding="{Binding Client}" Width="150"/>
+
+                <!-- Приоритет: фон по значению (перенос Apply-PriorityCellStyle) -->
+                <DataGridTemplateColumn Header="Приоритет" Width="92" SortMemberPath="Priority">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Priority}" VerticalAlignment="Stretch"
+                                       HorizontalAlignment="Stretch" Padding="8,0"
+                                       TextAlignment="Left">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Priority}" Value="Срочно">
+                                                <Setter Property="Background" Value="{StaticResource PriorityUrgentBrush}"/>
+                                                <Setter Property="Foreground" Value="White"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Priority}" Value="1">
+                                                <Setter Property="Background" Value="{StaticResource Priority1Brush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Priority}" Value="2">
+                                                <Setter Property="Background" Value="{StaticResource Priority2Brush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Priority}" Value="3">
+                                                <Setter Property="Background" Value="{StaticResource Priority3Brush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Priority}" Value="4">
+                                                <Setter Property="Background" Value="{StaticResource Priority4Brush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Priority}" Value="5">
+                                                <Setter Property="Background" Value="{StaticResource Priority5Brush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTextColumn Header="Этап" Binding="{Binding Status}" Width="86"/>
+
+                <!-- Напоминание: просроченное выделяется красным -->
+                <DataGridTemplateColumn Header="Напоминание" Width="112" SortMemberPath="ReminderDateText">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding ReminderDateText}" VerticalAlignment="Center" Padding="8,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ReminderOverdue}" Value="True">
+                                                <Setter Property="Background" Value="#FF0000"/>
+                                                <Setter Property="Foreground" Value="White"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTextColumn Header="Поставщики" Binding="{Binding SupplierCount}" Width="92"/>
+                <DataGridTextColumn Header="PI" Binding="{Binding InvoiceCount}" Width="58"/>
+                <DataGridTextColumn Header="Оплачено" Binding="{Binding PaymentText}" Width="86"/>
+                <DataGridTextColumn Header="Готово" Binding="{Binding DoneText}" Width="74"/>
+                <DataGridTextColumn Header="Маски" Binding="{Binding MasksText}" Width="82"/>
+                <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="130"/>
+                <DataGridTextColumn Header="Поступление комплектации" Binding="{Binding CompletionReceiptText}" Width="180"/>
+                <DataGridTextColumn Header="Обновлено" Binding="{Binding UpdatedAt}" Width="142"/>
+                <DataGridTextColumn Header="Период" Binding="{Binding Period}" Width="110"/>
+                <DataGridTextColumn Header="Исполнитель" Binding="{Binding Executor}" Width="110"/>
+                <DataGridTextColumn Header="Место сборки" Binding="{Binding AssemblyLocation}" Width="120"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <GridSplitter Grid.Row="3" Height="6" HorizontalAlignment="Stretch" Background="Transparent"/>
+
+        <!-- Карточка сделки + поставщики -->
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Поля выбранной сделки (только чтение) -->
+            <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                    Padding="10,6" Margin="0,4,0,6">
+                <StackPanel Orientation="Horizontal"
+                            DataContext="{Binding SelectedDeal}">
+                    <StackPanel.Resources>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="FontSize" Value="12"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                    </StackPanel.Resources>
+                    <TextBlock Text="Сделка:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding DealNumber, FallbackValue='—'}" FontWeight="SemiBold" Margin="4,0,16,0"/>
+                    <TextBlock Text="Клиент:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding Client, FallbackValue='—'}" Margin="4,0,16,0"/>
+                    <TextBlock Text="Этап:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding Status, FallbackValue='—'}" Margin="4,0,16,0"/>
+                    <TextBlock Text="Период:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding Period, FallbackValue='—'}" Margin="4,0,16,0"/>
+                    <TextBlock Text="Исполнитель:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding Executor, FallbackValue='—'}" Margin="4,0,16,0"/>
+                    <TextBlock Text="Место сборки:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding AssemblyLocation, FallbackValue='—'}" Margin="4,0,16,0"/>
+                    <TextBlock Text="Отслеживание:" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding TrackingStatus, FallbackValue='—'}" Margin="4,0,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Поставщики выбранной сделки -->
+            <DataGrid Grid.Row="1"
+                      ItemsSource="{Binding Suppliers}"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      HeadersVisibility="Column"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      Background="{StaticResource SurfaceBrush}"
+                      RowBackground="{StaticResource SurfaceBrush}"
+                      AlternatingRowBackground="{StaticResource SurfaceAltBrush}"
+                      GridLinesVisibility="Horizontal"
+                      HorizontalGridLinesBrush="{StaticResource LineBrush}"
+                      BorderThickness="1"
+                      BorderBrush="{StaticResource LineBrush}"
+                      FontFamily="Segoe UI" FontSize="12"
+                      Foreground="{StaticResource TextBrush}"
+                      ColumnHeaderStyle="{StaticResource GridHeaderStyle}"
+                      CellStyle="{StaticResource GridCellStyle}"
+                      ColumnHeaderHeight="32"
+                      RowHeight="28"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="130"/>
+                    <DataGridTextColumn Header="Сумма PI $" Binding="{Binding PiAmountUsd}" Width="92"/>
+                    <DataGridTextColumn Header="Сумма PI ¥" Binding="{Binding PiAmountCny}" Width="92"/>
+                    <DataGridTextColumn Header="Сумма RUB" Binding="{Binding PiAmountRub}" Width="92"/>
+                    <DataGridTextColumn Header="Оплачено" Binding="{Binding PaidAmount}" Width="92"/>
+                    <DataGridTextColumn Header="Срок" Binding="{Binding DeliveryWeeks}" Width="58"/>
+                    <DataGridCheckBoxColumn Header="Подано в оплату" Binding="{Binding PaymentSubmitted}" Width="110"/>
+                    <DataGridCheckBoxColumn Header="Оплачено?" Binding="{Binding Paid}" Width="76"/>
+                    <DataGridCheckBoxColumn Header="Инвойс" Binding="{Binding InvoiceReceived}" Width="62"/>
+                    <DataGridCheckBoxColumn Header="Инвойс подтв." Binding="{Binding InvoiceConfirmed}" Width="98"/>
+                    <DataGridCheckBoxColumn Header="ERP пост." Binding="{Binding ErpSupplierSent}" Width="76"/>
+                    <DataGridCheckBoxColumn Header="ERP Roger" Binding="{Binding ErpRogerSent}" Width="80"/>
+                    <DataGridTextColumn Header="Дата подтв." Binding="{Binding InvoiceConfirmedDate}" Width="90"/>
+                    <DataGridTextColumn Header="План поступл." Binding="{Binding ComponentsReceiptDate}" Width="100"/>
+                    <DataGridTextColumn Header="Факт поступл." Binding="{Binding ActualReceiptDate}" Width="100"/>
+                    <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="220"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </Grid>
+</UserControl>

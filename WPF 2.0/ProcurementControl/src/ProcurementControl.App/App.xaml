@@ -1,0 +1,47 @@
+<Application x:Class="ProcurementControl.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:ProcurementControl.ViewModels"
+             xmlns:views="clr-namespace:ProcurementControl.Views"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Palette.xaml"/>
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Привязка ViewModel -> View для переключения страниц -->
+            <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
+                <views:DashboardView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:TasksViewModel}">
+                <views:TasksView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:PurchaseViewModel}">
+                <views:PurchaseView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:RemindersViewModel}">
+                <views:RemindersView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:CompelParserViewModel}">
+                <views:CompelParserView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:RrfqViewModel}">
+                <views:RrfqView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:QuoteBaseViewModel}">
+                <views:QuoteBaseView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+                <views:SettingsView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:NotesViewModel}">
+                <views:NotesView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:PlaceholderViewModel}">
+                <views:PlaceholderView/>
+            </DataTemplate>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
