@@ -4,54 +4,6 @@
              Background="{StaticResource CanvasBrush}">
 
     <UserControl.Resources>
-        <!-- Карточка раздела (аналог New-CardPanel) -->
-        <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="12"/>
-        </Style>
-
-        <!-- Заголовок карточки (аналог *GroupTitle) -->
-        <Style x:Key="CardTitle" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="Margin" Value="0,0,0,8"/>
-        </Style>
-
-        <!-- Общий стиль сеток (аналог Set-GridLook) -->
-        <Style x:Key="GridLook" TargetType="DataGrid">
-            <Setter Property="AutoGenerateColumns" Value="False"/>
-            <Setter Property="HeadersVisibility" Value="Column"/>
-            <Setter Property="CanUserAddRows" Value="False"/>
-            <Setter Property="CanUserDeleteRows" Value="False"/>
-            <Setter Property="CanUserResizeRows" Value="False"/>
-            <Setter Property="SelectionUnit" Value="FullRow"/>
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}"/>
-            <Setter Property="AlternatingRowBackground" Value="{StaticResource SurfaceAltBrush}"/>
-            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource LineBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-            <Setter Property="ColumnHeaderHeight" Value="32"/>
-            <Setter Property="RowHeight" Value="30"/>
-        </Style>
-
-        <Style x:Key="GridHeaderLook" TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="8,0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
-            <Setter Property="BorderThickness" Value="0,0,0,1"/>
-        </Style>
-
         <!-- Перенос текста в длинных колонках (оригинал подгонял высоту строк) -->
         <Style x:Key="WrapCell" TargetType="TextBlock">
             <Setter Property="TextWrapping" Value="Wrap"/>
@@ -60,26 +12,27 @@
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="248"/>
+            <RowDefinition Height="280"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- Верхняя полоса: выбор файлов 68% / параметры 32% (строки 989-996) -->
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="68*"/>
+                <ColumnDefinition Width="*" MinWidth="0"/>
                 <ColumnDefinition Width="8"/>
-                <ColumnDefinition Width="32*"/>
+                <ColumnDefinition Width="380" MinWidth="340"/>
             </Grid.ColumnDefinitions>
 
             <!-- 1. Выбор файла (строки 998-1086) -->
-            <Border Grid.Column="0" Style="{StaticResource Card}">
+            <Border Grid.Column="0" Style="{StaticResource CardStyle}" MinWidth="0">
                 <DockPanel LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource CardTitle}" Text="1. Выбор файла"/>
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionTitle}" Text="1. Выбор файла" Margin="0,0,0,8"/>
                     <Grid>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="36"/>
+                            <RowDefinition Height="*" MinHeight="54"/>
+                            <RowDefinition Height="8"/>
                             <RowDefinition Height="34"/>
                         </Grid.RowDefinitions>
 
@@ -93,23 +46,17 @@
                                        Foreground="{StaticResource TextBrush}"/>
                             <TextBox Grid.Column="1" Margin="0,0,8,0"
                                      Text="{Binding RfqPath, Mode=OneWay}"
-                                     IsReadOnly="True"
-                                     VerticalContentAlignment="Center"
-                                     Background="{StaticResource SurfaceBrush}"
-                                     Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource SecondaryBorderBrush}"
-                                     Padding="6,0" FontFamily="Segoe UI" FontSize="12"/>
+                                     IsReadOnly="True"/>
                             <Button Grid.Column="2" Content="Выбрать..."
                                     Style="{StaticResource SecondaryButtonStyle}"
                                     Command="{Binding ChooseRfqCommand}"/>
                         </Grid>
 
                         <!-- Файлы поставщиков; имя поставщика можно вписать -->
-                        <DataGrid x:Name="supplierGrid" Grid.Row="1"
-                                  Style="{StaticResource GridLook}"
-                                  ColumnHeaderStyle="{StaticResource GridHeaderLook}"
+                        <DataGrid x:Name="supplierGrid" Grid.Row="1" Margin="0,6,0,6"
                                   ItemsSource="{Binding Suppliers}"
                                   SelectionMode="Extended"
+                                  AutoGenerateColumns="False"
                                   IsReadOnly="False">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Файл поставщика"
@@ -121,7 +68,7 @@
                             </DataGrid.Columns>
                         </DataGrid>
 
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button Content="Добавить поставщиков" Width="180" Height="28" Margin="0,0,8,0"
                                     Style="{StaticResource SecondaryButtonStyle}"
                                     Command="{Binding AddSuppliersCommand}"/>
@@ -134,15 +81,15 @@
             </Border>
 
             <!-- 2. Параметры и запуск (строки 1088-1167) -->
-            <Border Grid.Column="2" Style="{StaticResource Card}">
+            <Border Grid.Column="2" Style="{StaticResource CardStyle}" MinWidth="340">
                 <DockPanel LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource CardTitle}" Text="2. Параметры и запуск"/>
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionTitle}" Text="2. Параметры и запуск" Margin="0,0,0,8"/>
                     <Grid>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="40"/>
-                            <RowDefinition Height="34"/>
-                            <RowDefinition Height="34"/>
-                            <RowDefinition Height="34"/>
+                            <RowDefinition Height="42"/>
+                            <RowDefinition Height="38"/>
+                            <RowDefinition Height="38"/>
+                            <RowDefinition Height="38"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
@@ -173,42 +120,33 @@
                                 Command="{Binding SaveResultCommand}"/>
 
                         <!-- Лог (аналог $logBox) -->
-                        <TextBox Grid.Row="4" Margin="0,4,0,0"
+                        <TextBox Grid.Row="4" Margin="0,6,0,0"
                                  Text="{Binding LogText, Mode=OneWay}"
                                  IsReadOnly="True"
                                  TextWrapping="Wrap"
                                  VerticalScrollBarVisibility="Auto"
-                                 Background="{StaticResource SurfaceAltBrush}"
-                                Foreground="{StaticResource TextBrush}"
-                                 BorderBrush="{StaticResource LineBrush}"
-                                 FontFamily="Segoe UI" FontSize="12"
-                                 Padding="6"/>
+                                 FontSize="12"
+                                 Padding="8"/>
                     </Grid>
                 </DockPanel>
             </Border>
         </Grid>
 
         <!-- 3. Preview и ручная корректировка (строки 1169-1380) -->
-        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,8,0,0">
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Margin="0,8,0,0">
             <DockPanel LastChildFill="True">
-                <TextBlock DockPanel.Dock="Top" Style="{StaticResource CardTitle}"
-                           Text="3. Preview и ручная корректировка"/>
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionTitle}"
+                           Text="3. Preview и ручная корректировка" Margin="0,0,0,8"/>
 
                 <!-- Панель фильтра (строки 1190-1238) -->
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-                    <TextBlock Text="Фильтр:" Width="56" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextBrush}"/>
-                    <ComboBox Width="190" Height="28" VerticalContentAlignment="Center"
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Фильтр:" Width="56"/>
+                    <ComboBox Width="190"
                               ItemsSource="{Binding FilterOptions}"
                               SelectedIndex="{Binding SelectedFilterIndex, Mode=TwoWay}"/>
-                    <TextBlock Text="Поиск:" Width="52" Margin="12,0,0,0" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextBrush}"/>
-                    <TextBox Width="240" Height="28" VerticalContentAlignment="Center"
-                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                             Background="{StaticResource SurfaceBrush}"
-                             Foreground="{StaticResource TextBrush}"
-                             BorderBrush="{StaticResource SecondaryBorderBrush}"
-                             Padding="6,0" FontFamily="Segoe UI" FontSize="12"/>
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Поиск:" Width="52" Margin="12,0,0,0"/>
+                    <TextBox Width="240"
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
                     <Button Content="Включить" Width="92" Height="28" Margin="12,0,0,0"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Command="{Binding IncludeSelectedCommand}"/>
@@ -226,8 +164,6 @@
                     </Grid.RowDefinitions>
 
                     <DataGrid x:Name="previewGrid" Grid.Row="0"
-                              Style="{StaticResource GridLook}"
-                              ColumnHeaderStyle="{StaticResource GridHeaderLook}"
                               ItemsSource="{Binding PreviewRows}"
                               SelectedItem="{Binding SelectedDecision, Mode=TwoWay}"
                               SelectionMode="Single"
@@ -312,7 +248,7 @@
                         <StackPanel Grid.Row="0" Orientation="Horizontal">
                             <TextBlock Text="Квоты выбранной позиции" Width="188"
                                        VerticalAlignment="Center" Margin="0,0,12,0"
-                                       FontWeight="Bold" FontFamily="Segoe UI" FontSize="12"
+                                       FontFamily="Segoe UI Semibold" FontSize="12"
                                        Foreground="{StaticResource TextBrush}"/>
                             <Button Content="Сделать победителем" Width="160" Height="28" Margin="0,0,8,0"
                                     Style="{StaticResource SecondaryButtonStyle}"
@@ -323,8 +259,6 @@
                         </StackPanel>
 
                         <DataGrid x:Name="quoteGrid" Grid.Row="1"
-                                  Style="{StaticResource GridLook}"
-                                  ColumnHeaderStyle="{StaticResource GridHeaderLook}"
                                   ItemsSource="{Binding QuoteDetails}"
                                   SelectedItem="{Binding SelectedQuoteDetail, Mode=TwoWay}"
                                   SelectionMode="Single"

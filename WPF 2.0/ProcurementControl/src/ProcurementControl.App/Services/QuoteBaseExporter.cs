@@ -12,7 +12,7 @@ public static class QuoteBaseExporter
 {
     private static readonly string[] Headers =
     {
-        "Дата квоты", "Value", "PN", "Поставщик", "Цена", "Срок",
+        "Дата квоты", "Value", "PN", "Количество", "Поставщик", "Цена", "Срок",
         "Lead time total", "MFG", "Победитель", "Почему выбран", "Предупреждение", "RFQ",
     };
 
@@ -50,20 +50,21 @@ public static class QuoteBaseExporter
                 ws.Cells.Item(rowNumber, 1).Value2 = row.QuoteDate;
                 ws.Cells.Item(rowNumber, 2).Value2 = row.RfqValue;
                 ws.Cells.Item(rowNumber, 3).Value2 = row.PN;
-                ws.Cells.Item(rowNumber, 4).Value2 = row.Supplier;
+                ws.Cells.Item(rowNumber, 4).Value2 = row.RequestedQuantity;
+                ws.Cells.Item(rowNumber, 5).Value2 = row.Supplier;
                 // Цена — числом, как в оригинале (пусто при отсутствии).
                 if (row.UnitPrice is not null)
                 {
-                    ws.Cells.Item(rowNumber, 5).Value2 = row.UnitPrice.Value;
+                    ws.Cells.Item(rowNumber, 6).Value2 = row.UnitPrice.Value;
                 }
 
-                ws.Cells.Item(rowNumber, 6).Value2 = row.LeadTime;
-                ws.Cells.Item(rowNumber, 7).Value2 = row.LeadTimeTotal;
-                ws.Cells.Item(rowNumber, 8).Value2 = row.Mfg;
-                ws.Cells.Item(rowNumber, 9).Value2 = row.WinnerMark;
-                ws.Cells.Item(rowNumber, 10).Value2 = row.WinnerReason;
-                ws.Cells.Item(rowNumber, 11).Value2 = row.Warning;
-                ws.Cells.Item(rowNumber, 12).Value2 = row.RfqPath;
+                ws.Cells.Item(rowNumber, 7).Value2 = row.LeadTime;
+                ws.Cells.Item(rowNumber, 8).Value2 = row.LeadTimeTotal;
+                ws.Cells.Item(rowNumber, 9).Value2 = row.Mfg;
+                ws.Cells.Item(rowNumber, 10).Value2 = row.WinnerMark;
+                ws.Cells.Item(rowNumber, 11).Value2 = row.WinnerReason;
+                ws.Cells.Item(rowNumber, 12).Value2 = row.Warning;
+                ws.Cells.Item(rowNumber, 13).Value2 = row.RfqPath;
                 rowNumber++;
             }
 

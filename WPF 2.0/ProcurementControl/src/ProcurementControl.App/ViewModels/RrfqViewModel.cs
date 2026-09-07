@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -12,8 +13,8 @@ namespace ProcurementControl.ViewModels;
 /// <summary>
 /// Страница «Сравнение RRFQ» — перенос $rrfqPage (RRFQComparer.ps1,
 /// строки 980-1380, 4572-4702, 5926-6062). Анализ выполняется в отдельном
-/// STA-потоке, чтобы не замораживать интерфейс. База данных не используется:
-/// Save-QuoteHistory и сохранение ширины колонок в порт не входят.
+/// STA-потоке, чтобы не замораживать интерфейс. Результат сохраняется в базу
+/// квот после создания итоговой книги.
 /// </summary>
 public partial class RrfqViewModel : ObservableObject
 {
@@ -39,6 +40,9 @@ public partial class RrfqViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _canSaveResult;
+
+    [ObservableProperty]
+    private string _lastResultPath = string.Empty;
 
     [ObservableProperty]
     private Decision? _selectedDecision;
@@ -85,6 +89,7 @@ public partial class RrfqViewModel : ObservableObject
         RunPreviewCommand.NotifyCanExecuteChanged();
         SaveResultCommand.NotifyCanExecuteChanged();
         OpenManualMatchCommand.NotifyCanExecuteChanged();
+        ImportResultQuotesCommand.NotifyCanExecuteChanged();
     }
 
     // ----- 1. Выбор файла -----
@@ -228,8 +233,18 @@ public partial class RrfqViewModel : ObservableObject
                     }
 
                     var path = (string)result!;
-                    LogText += "\r\nГотово: " + path;
-                    MessageBox.Show("Готово.\r\n" + path, "RRFQ создан");
+                    try
+                    {
+                        LastResultPath = path;
+                        var snapshot = PurchaseWriteRepository.SaveAnalysisSnapshot(analysis, path);
+                        LogText += "\r\nГотово: " + path;
+                        var action = snapshot.IsDuplicate ? "Когорта обновлена" : "Когорта сохранена";
+                        MessageBox.Show("Готово.\r\n" + path + $"\r\n{action}. Квот: {snapshot.SavedQuotes}", "RRFQ создан");
+                    }
+                    catch (Exception saveError)
+                    {
+                        MessageBox.Show("Результат создан, но статистику сохранить не удалось:\r\n" + saveError.Message, "Сохранение статистики");
+                    }
                 });
         }
         catch (Exception ex)
@@ -239,6 +254,68 @@ public partial class RrfqViewModel : ObservableObject
     }
 
     private bool CanSave() => CanSaveResult && !IsBusy;
+
+    /// <summary>Загрузка старого результирующего RRFQ: в нём есть только победители.</summary>
+    [RelayCommand(CanExecute = nameof(CanImportResult))]
+    private void ImportResultQuotes()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Выберите результирующий RRFQ",
+            Filter = "Excel files (*.xlsx;*.xls)|*.xlsx;*.xls|All files (*.*)|*.*",
+            FileName = string.IsNullOrWhiteSpace(LastResultPath) ? string.Empty : Path.GetFileName(LastResultPath),
+            InitialDirectory = string.IsNullOrWhiteSpace(LastResultPath) ? string.Empty : Path.GetDirectoryName(LastResultPath),
+        };
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            IsBusy = true;
+            LogText += "\r\n\r\nЧитаю результирующий RRFQ...";
+            StartStaJob(
+                () => RrfqQuoteImportService.ReadQuotes(new[] { (dialog.FileName, string.Empty) }),
+                (error, result) =>
+                {
+                    IsBusy = false;
+                    if (error is not null)
+                    {
+                        MessageBox.Show(error.Message, "Импорт квот");
+                        return;
+                    }
+
+                    var quotes = (List<Quote>)result!;
+                    if (quotes.Count == 0)
+                    {
+                        MessageBox.Show("В результирующем RRFQ не найдено квот.", "Импорт квот");
+                        return;
+                    }
+
+                    var confirmation = new QuoteImportConfirmationWindow(quotes, new[] { dialog.FileName })
+                    {
+                        Owner = Application.Current.MainWindow,
+                    };
+                    if (confirmation.ShowDialog() != true) return;
+
+                    try
+                    {
+                        var saved = PurchaseWriteRepository.SaveWinnerOnlyQuotes(quotes, dialog.FileName);
+                        LogText += $"\r\nИмпортировано winner-only квот: {saved.SavedQuotes}";
+                        MessageBox.Show($"Импортировано квот: {saved.SavedQuotes}\r\nДанные помечены как неполные winner-only.", "Импорт квот");
+                    }
+                    catch (Exception saveError)
+                    {
+                        MessageBox.Show("Файл прочитан, но импортировать квоты не удалось:\r\n" + saveError.Message, "Импорт квот");
+                    }
+                });
+        }
+        catch (Exception ex)
+        {
+            IsBusy = false;
+            MessageBox.Show(ex.Message, "Импорт квот");
+        }
+    }
+
+    private bool CanImportResult() => !IsBusy;
 
     // ----- 3. Preview и ручная корректировка -----
 
@@ -511,5 +588,17 @@ public partial class RrfqViewModel : ObservableObject
         thread.SetApartmentState(ApartmentState.STA);
         thread.IsBackground = true;
         thread.Start();
+    }
+
+    public RrfqViewModel()
+    {
+        RrfqImportQueue.Added += AddQueuedSupplier;
+        foreach (var item in RrfqImportQueue.TakePending()) AddQueuedSupplier(item.Path, item.Supplier);
+    }
+
+    private void AddQueuedSupplier(string path, string supplier)
+    {
+        if (!Suppliers.Any(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)))
+            Suppliers.Add(new SupplierFileEntry { Path = path, Supplier = supplier });
     }
 }

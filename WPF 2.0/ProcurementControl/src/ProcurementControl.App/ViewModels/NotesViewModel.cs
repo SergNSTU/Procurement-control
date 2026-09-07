@@ -1,21 +1,20 @@
 using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ProcurementControl.Services;
+using ProcurementControl.Views;
 
 namespace ProcurementControl.ViewModels;
 
-/// <summary>
-/// Страница «Заметки». Переносит поведение блока заметок из Show-MainFormV2
-/// (RRFQComparer.ps1, строки ~3138-3258): список файлов, выбор, редактирование,
-/// сохранение, создание новой заметки и обновление списка.
-/// </summary>
 public partial class NotesViewModel : ObservableObject
 {
     private readonly NotesService _notes;
-
-    // Аналог $script:NotesLoading — защита от рекурсивной загрузки при смене выбора.
+    private readonly DispatcherTimer _autoSaveTimer;
     private bool _isLoading;
+    private bool _isDirty;
+    private NoteFile? _loadedNote;
 
     public ObservableCollection<NoteFile> Notes { get; } = new();
 
@@ -26,74 +25,148 @@ public partial class NotesViewModel : ObservableObject
     private string _editorText = string.Empty;
 
     [ObservableProperty]
-    private string _currentPath = string.Empty;
-
-    [ObservableProperty]
     private string _statusMessage = string.Empty;
+
+    public string NoteTitle => SelectedNote?.Name ?? "Заметки";
 
     public NotesViewModel(NotesService notes)
     {
         _notes = notes;
+        _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+        _autoSaveTimer.Tick += (_, _) => SaveLoadedNote();
         Reload();
     }
 
     partial void OnSelectedNoteChanged(NoteFile? value)
     {
-        if (_isLoading || value is null)
+        OnPropertyChanged(nameof(NoteTitle));
+        if (_isLoading)
         {
             return;
         }
-        LoadSelectedToEditor();
+
+        SaveLoadedNote();
+        LoadNote(value);
+    }
+
+    partial void OnEditorTextChanged(string value)
+    {
+        if (_isLoading || _loadedNote is null)
+        {
+            return;
+        }
+
+        _isDirty = true;
+        StatusMessage = "Сохранение...";
+        _autoSaveTimer.Stop();
+        _autoSaveTimer.Start();
     }
 
     [RelayCommand]
     private void Reload()
     {
-        _isLoading = true;
-        try
-        {
-            var preferredPath = SelectedNote?.Path ?? CurrentPath;
-
-            Notes.Clear();
-            foreach (var note in _notes.GetNoteFiles())
-            {
-                Notes.Add(note);
-            }
-
-            var target = Notes.FirstOrDefault(n =>
-                string.Equals(n.Path, preferredPath, StringComparison.OrdinalIgnoreCase))
-                ?? Notes.FirstOrDefault();
-
-            SelectedNote = target;
-            if (target is not null)
-            {
-                LoadSelectedToEditor();
-            }
-            StatusMessage = Notes.Count == 0 ? "Заметок нет." : $"Заметок: {Notes.Count}";
-        }
-        finally
-        {
-            _isLoading = false;
-        }
+        SaveLoadedNote();
+        RefreshNotes(SelectedNote?.Path ?? _loadedNote?.Path);
+        StatusMessage = Notes.Count == 0 ? "Заметок нет." : "Заметок: " + Notes.Count;
     }
 
     [RelayCommand]
-    private void Save()
-    {
-        if (SelectedNote is null)
-        {
-            StatusMessage = "Нет выбранной заметки для сохранения.";
-            return;
-        }
-        _notes.Save(SelectedNote.Path, EditorText);
-        CurrentPath = SelectedNote.Path;
-        StatusMessage = "Сохранено.";
-    }
+    private void Save() => SaveLoadedNote();
 
     [RelayCommand]
     private void NewNote()
     {
-        var path = _notes.CreateNewNote();
+        var dialog = new InputDialogWindow("Новая заметка", "Название заметки")
+        {
+            Owner = Application.Current.MainWindow,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            SaveLoadedNote();
+            var path = _notes.CreateNewNote(dialog.Value);
+            RefreshNotes(path);
+            StatusMessage = "Заметка создана.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Новая заметка");
+        }
+    }
+
+    [RelayCommand]
+    private void RenameNote()
+    {
+        if (SelectedNote is null)
+        {
+            return;
+        }
+
+        var dialog = new InputDialogWindow("Переименовать заметку", "Название заметки", SelectedNote.Name)
+        {
+            Owner = Application.Current.MainWindow,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            SaveLoadedNote();
+            var renamed = _notes.Rename(SelectedNote.Path, dialog.Value);
+            RefreshNotes(renamed.Path);
+            StatusMessage = "Заметка переименована.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Переименовать заметку");
+        }
+    }
+
+    [RelayCommand]
+    private void DeleteNote()
+    {
+        if (SelectedNote is null)
+        {
+            return;
+        }
+
+        if (Notes.Count <= 1)
+        {
+            MessageBox.Show("Нельзя удалить единственную заметку.", "Удалить заметку");
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            "Переместить заметку «" + SelectedNote.Name + "» в корзину?",
+            "Удалить заметку",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            SaveLoadedNote();
+            _notes.MoveToTrash(SelectedNote);
+            RefreshNotes(null);
+            StatusMessage = "Заметка перемещена в корзину.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Удалить заметку");
+        }
+    }
+
+    private void RefreshNotes(string? preferredPath)
+    {
         _isLoading = true;
         try
         {
@@ -102,13 +175,28 @@ public partial class NotesViewModel : ObservableObject
             {
                 Notes.Add(note);
             }
-            SelectedNote = Notes.FirstOrDefault(n =>
-                string.Equals(n.Path, path, StringComparison.OrdinalIgnoreCase));
-            if (SelectedNote is not null)
-            {
-                LoadSelectedToEditor();
-            }
-            StatusMessage = "Создана новая заметка.";
+
+            SelectedNote = Notes.FirstOrDefault(note =>
+                string.Equals(note.Path, preferredPath, StringComparison.OrdinalIgnoreCase))
+                ?? Notes.FirstOrDefault();
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+
+        LoadNote(SelectedNote);
+    }
+
+    private void LoadNote(NoteFile? note)
+    {
+        _autoSaveTimer.Stop();
+        _isLoading = true;
+        try
+        {
+            _loadedNote = note;
+            EditorText = note is null ? string.Empty : _notes.Read(note.Path);
+            _isDirty = false;
         }
         finally
         {
@@ -116,15 +204,24 @@ public partial class NotesViewModel : ObservableObject
         }
     }
 
-    private void LoadSelectedToEditor()
+    private void SaveLoadedNote()
     {
-        if (SelectedNote is null)
+        _autoSaveTimer.Stop();
+        if (!_isDirty || _loadedNote is null)
         {
-            EditorText = string.Empty;
-            CurrentPath = string.Empty;
             return;
         }
-        CurrentPath = SelectedNote.Path;
-        EditorText = _notes.Read(SelectedNote.Path);
+
+        try
+        {
+            StatusMessage = "Сохранение...";
+            _notes.Save(_loadedNote.Path, EditorText);
+            _isDirty = false;
+            StatusMessage = "Сохранено";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Не удалось сохранить: " + ex.Message;
+        }
     }
 }

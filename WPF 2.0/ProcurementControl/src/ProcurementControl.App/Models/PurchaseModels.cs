@@ -8,9 +8,7 @@ public enum DealFilter
     Active,
     Tracking,
     China,
-    Purchase,
     Pause,
-    WaitingReceipt,
     Done,
     Archived,
     AllRecords,
@@ -24,9 +22,7 @@ public static class DealFilterLabels
         DealFilter.Active => "Активные",
         DealFilter.Tracking => "На отслеживании",
         DealFilter.China => "Китай",
-        DealFilter.Purchase => "Закупка",
         DealFilter.Pause => "Пауза",
-        DealFilter.WaitingReceipt => "Ожидается поступление",
         DealFilter.Done => "Готово",
         DealFilter.Archived => "Архив",
         DealFilter.AllRecords => "Все включая архив",
@@ -82,8 +78,12 @@ public sealed class PurchaseDealRow
     /// <summary>Колонка «Готово»: "готово/поставщики".</summary>
     public string DoneText => DoneCount + "/" + SupplierCount;
 
-    /// <summary>Колонка «Маски»: значение 2 показывается пустой строкой.</summary>
-    public string MasksText => Masks == 2 ? string.Empty : (Masks == 1 ? "Да" : "Нет");
+    /// <summary>Колонка «Маски»: пустое значение хранится в БД как 2.</summary>
+    public string MasksText
+    {
+        get => Masks == 2 ? string.Empty : (Masks == 1 ? "Да" : "Нет");
+        set => Masks = string.IsNullOrWhiteSpace(value) ? 2 : value.Trim() == "Да" ? 1 : 0;
+    }
 
     public string ReminderDateText => PurchaseFormatting.Date(ReminderDate);
 

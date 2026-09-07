@@ -1,6 +1,7 @@
 <UserControl x:Class="ProcurementControl.Views.CompelParserView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ProcurementControl.Views"
              Background="{StaticResource CanvasBrush}">
 
     <UserControl.Resources>
@@ -9,24 +10,23 @@
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
             <Setter Property="Margin" Value="0,4,8,4"/>
-            <Setter Property="Padding" Value="6,6"/>
+            <Setter Property="Padding" Value="6,8"/>
         </Style>
     </UserControl.Resources>
 
-    <Grid Margin="12">
+    <Grid Margin="18">
         <Grid.RowDefinitions>
-            <RowDefinition Height="46"/>
-            <RowDefinition Height="78"/>
-            <RowDefinition Height="30"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- Тулбар: путь к HTML + кнопки управления (строки 2780-2833) -->
         <DockPanel Grid.Row="0" VerticalAlignment="Center" LastChildFill="True">
-            <TextBlock DockPanel.Dock="Left" Text="HTML:"
-                       Foreground="{StaticResource TextBrush}"
-                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="HTML:" Margin="0,0,8,0"/>
             <Button DockPanel.Dock="Right" Content="Открыть папку"
                     Style="{StaticResource SecondaryButtonStyle}"
                     Command="{Binding OpenExportFolderCommand}"
@@ -35,6 +35,10 @@
                     Style="{StaticResource SecondaryButtonStyle}"
                     Command="{Binding ExportExcelCommand}"
                     Width="135" Height="30" Margin="8,0,0,0"/>
+            <Button DockPanel.Dock="Right" Content="В сравнение RRFQ"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ExportToRrfqCommand}"
+                    Width="150" Height="30" Margin="8,0,0,0"/>
             <Button DockPanel.Dock="Right" Content="Разобрать"
                     Style="{StaticResource PrimaryButtonStyle}"
                     Command="{Binding ParseCommand}"
@@ -44,16 +48,11 @@
                     Command="{Binding ChooseHtmlCommand}"
                     Width="130" Height="30" Margin="8,0,0,0"/>
             <TextBox Text="{Binding HtmlPath, Mode=OneWay}"
-                     IsReadOnly="True"
-                     Height="30" VerticalContentAlignment="Center"
-                     Background="{StaticResource SurfaceBrush}"
-                     Foreground="{StaticResource TextBrush}"
-                     BorderBrush="{StaticResource SecondaryBorderBrush}"
-                     Padding="6,0" FontFamily="Segoe UI" FontSize="12"/>
+                     IsReadOnly="True"/>
         </DockPanel>
 
         <!-- Шесть карточек метрик (строки 2835-2878) -->
-        <UniformGrid Grid.Row="1" Columns="6">
+        <UniformGrid Grid.Row="1" Columns="6" Margin="0,10,0,0">
             <Border Style="{StaticResource MetricCard}">
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding TotalRowsText}"
@@ -126,7 +125,7 @@
         <TextBlock Grid.Row="2"
                    Text="{Binding StatusText}"
                    VerticalAlignment="Center"
-                   FontFamily="Segoe UI" FontSize="12">
+                   FontSize="12">
             <TextBlock.Style>
                 <Style TargetType="TextBlock">
                     <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
@@ -139,59 +138,40 @@
             </TextBlock.Style>
         </TextBlock>
 
-        <!-- Сетка позиций (строки 2887-2920) -->
-        <DataGrid Grid.Row="3"
-                  ItemsSource="{Binding Rows}"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  HeadersVisibility="Column"
-                  CanUserAddRows="False"
-                  CanUserDeleteRows="False"
-                  SelectionMode="Single"
-                  SelectionUnit="FullRow"
-                  Background="{StaticResource SurfaceBrush}"
-                  RowBackground="{StaticResource SurfaceBrush}"
-                  AlternatingRowBackground="{StaticResource SurfaceAltBrush}"
-                  GridLinesVisibility="Horizontal"
-                  HorizontalGridLinesBrush="{StaticResource LineBrush}"
-                  BorderThickness="1"
-                  BorderBrush="{StaticResource LineBrush}"
-                  FontFamily="Segoe UI" FontSize="12"
-                  Foreground="{StaticResource TextBrush}"
-                  ColumnHeaderHeight="36"
-                  RowHeight="32">
-            <DataGrid.ColumnHeaderStyle>
-                <Style TargetType="DataGridColumnHeader">
-                    <Setter Property="Background" Value="{StaticResource HeaderBrush}"/>
-                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-                    <Setter Property="FontWeight" Value="SemiBold"/>
-                    <Setter Property="Padding" Value="8,0"/>
-                    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
-                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                </Style>
-            </DataGrid.ColumnHeaderStyle>
-            <!-- Строки без подобранной суммы — жёлтые (строки 2971-2973) -->
-            <DataGrid.RowStyle>
-                <Style TargetType="DataGridRow">
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding HasTotal}" Value="False">
-                            <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </DataGrid.RowStyle>
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="N" Binding="{Binding Number}" Width="58"/>
-                <DataGridTextColumn Header="Исходное наименование" Binding="{Binding SourceName}" Width="230"/>
-                <DataGridTextColumn Header="Подобранный товар" Binding="{Binding MatchedPart}" Width="250"/>
-                <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="140"/>
-                <DataGridTextColumn Header="Срок" Binding="{Binding LeadTime}" Width="105"/>
-                <DataGridTextColumn Header="Кол-во" Binding="{Binding Quantity}" Width="88"/>
-                <DataGridTextColumn Header="Цена за шт" Binding="{Binding UnitPriceText}" Width="105"/>
-                <DataGridTextColumn Header="Валюта" Binding="{Binding Currency}" Width="80"/>
-                <DataGridTextColumn Header="Сумма" Binding="{Binding TotalText}" Width="110"/>
-                <DataGridTextColumn Header="Валюта суммы" Binding="{Binding TotalCurrency}" Width="110"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <!-- Сетка позиций в карточке (строки 2887-2920) -->
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="0" Margin="0,8,0,0">
+            <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
+                <DataGrid ItemsSource="{Binding Rows}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          BorderThickness="0"
+                          RowHeight="32">
+                    <!-- Строки без подобранной суммы — жёлтые (строки 2971-2973) -->
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow" BasedOn="{StaticResource AppGridRowStyle}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasTotal}" Value="False">
+                                    <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="N" Binding="{Binding Number}" Width="58"/>
+                        <DataGridTextColumn Header="Исходное наименование" Binding="{Binding SourceName}" Width="230"/>
+                        <DataGridTextColumn Header="Подобранный товар" Binding="{Binding MatchedPart}" Width="250"/>
+                        <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="140"/>
+                        <DataGridTextColumn Header="Срок" Binding="{Binding LeadTime}" Width="105"/>
+                        <DataGridTextColumn Header="Кол-во" Binding="{Binding Quantity}" Width="88"/>
+                        <DataGridTextColumn Header="Цена за шт" Binding="{Binding UnitPriceText}" Width="105"/>
+                        <DataGridTextColumn Header="Валюта" Binding="{Binding Currency}" Width="80"/>
+                        <DataGridTextColumn Header="Сумма" Binding="{Binding TotalText}" Width="110"/>
+                        <DataGridTextColumn Header="Валюта суммы" Binding="{Binding TotalCurrency}" Width="110"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Border>
     </Grid>
 </UserControl>

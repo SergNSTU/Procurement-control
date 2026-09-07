@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using ProcurementControl.Models;
 
 namespace ProcurementControl.Services;
@@ -14,24 +15,32 @@ public sealed class DashboardService
     private const string DateFormat = "yyyy-MM-dd HH:mm:ss";
     private static readonly CultureInfo Ru = CultureInfo.GetCultureInfo("ru-RU");
 
-    /// <summary>Аналог Get-PurchaseDashboard.</summary>
-    public DashboardData GetDashboard()
+    public IReadOnlyList<int> GetAvailableYears()
+    {
+        using var snapshot = PurchaseSnapshot.Create();
+        var repo = new PurchaseRepository(snapshot.Connection);
+        return repo.GetDashboardYears().Append(DateTime.Now.Year).Distinct().OrderByDescending(year => year).ToList();
+    }
+
+    /// <summary>Метрики для выбранного календарного месяца или квартала.</summary>
+    public DashboardData GetDashboard(DashboardPeriod period)
     {
         using var snapshot = PurchaseSnapshot.Create();
         var repo = new PurchaseRepository(snapshot.Connection);
 
         var now = DateTime.Now;
-        var monthStart = new DateTime(now.Year, now.Month, 1);
-        var monthEnd = monthStart.AddMonths(1);
         var trackingStartedAt = GetTrackingStartedAt(repo) ?? now;
 
         return new DashboardData
         {
-            MonthLabel = monthStart.ToString("MMMM yyyy", Ru),
+            PeriodLabel = FormatPeriodLabel(period),
+            PeriodUnitLabel = period.UnitLabel,
             TrackingStartedAt = trackingStartedAt,
-            Assemblies = GetDirection(repo, "deals", monthStart, monthEnd, trackingStartedAt, now),
-            Components = GetDirection(repo, "component_deals", monthStart, monthEnd, trackingStartedAt, now),
-            History = GetHistory(repo, monthStart, trackingStartedAt)
+            Assemblies = GetDirection(repo, "deals", period.Start, period.End, trackingStartedAt, now,
+                SumOrderedDealAmounts(repo, period.Start, period.End)),
+            Components = GetDirection(repo, "component_deals", period.Start, period.End, trackingStartedAt, now,
+                repo.GetOrderedComponentAmounts(period.Start, period.End).Sum(ParseAmount)),
+            History = GetHistory(repo, period.End.AddMonths(-1), trackingStartedAt)
         };
     }
 
@@ -68,27 +77,28 @@ public sealed class DashboardService
     /// <summary>Аналог Get-PurchaseDashboardDirection.</summary>
     private static DirectionMetrics GetDirection(
         PurchaseRepository repo, string table,
-        DateTime monthStart, DateTime monthEnd,
-        DateTime trackingStartedAt, DateTime now)
+        DateTime periodStart, DateTime periodEnd,
+        DateTime trackingStartedAt, DateTime now, decimal orderAmountUsd)
     {
-        var currentCohortStart = trackingStartedAt > monthStart ? trackingStartedAt : monthStart;
+        var currentCohortStart = trackingStartedAt > periodStart ? trackingStartedAt : periodStart;
         var matureCutoff = now.Date.AddDays(-60);
 
-        var createdThisMonth = GetCount(repo, table, "created_at", monthStart, monthEnd);
-        var orderedThisMonth = GetCount(repo, table, "ordered_at", monthStart, monthEnd);
+        var createdThisMonth = GetCount(repo, table, "created_at", periodStart, periodEnd);
+        var orderedThisMonth = GetCount(repo, table, "ordered_at", periodStart, periodEnd);
 
         var currentCohortCreated = repo.ScalarInt(
             $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e",
-            P(currentCohortStart, monthEnd));
+            P(currentCohortStart, periodEnd));
         var currentCohortOrdered = repo.ScalarInt(
             $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''",
-            P(currentCohortStart, monthEnd));
+            P(currentCohortStart, periodEnd));
+        var matureCohortEnd = matureCutoff < periodEnd ? matureCutoff : periodEnd;
         var matureCohortCreated = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @t AND created_at < @m",
-            T(trackingStartedAt, matureCutoff));
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e",
+            P(currentCohortStart, matureCohortEnd));
         var matureCohortOrdered = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @t AND created_at < @m AND IFNULL(ordered_at, '') <> ''",
-            T(trackingStartedAt, matureCutoff));
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''",
+            P(currentCohortStart, matureCohortEnd));
 
         return new DirectionMetrics
         {
@@ -97,8 +107,32 @@ public sealed class DashboardService
             CurrentConversion = GetConversion(currentCohortOrdered, currentCohortCreated),
             MatureConversion = GetConversion(matureCohortOrdered, matureCohortCreated),
             CurrentCohortCreated = currentCohortCreated,
-            MatureCohortCreated = matureCohortCreated
+            MatureCohortCreated = matureCohortCreated,
+            OrderAmountUsd = orderAmountUsd
         };
+    }
+
+    /// <summary>Сначала суммируем поставщиков в рамках каждой сделки, затем сделки периода.</summary>
+    private static decimal SumOrderedDealAmounts(PurchaseRepository repo, DateTime start, DateTime end)
+        => repo.GetOrderedDealSupplierAmounts(start, end)
+            .GroupBy(row => row.DealId)
+            .Sum(deal => deal.Sum(row => ParseAmount(row.AmountUsd)));
+
+    private static decimal ParseAmount(string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return 0m;
+        text = Regex.Replace(text, @"[^0-9,\.\-]", string.Empty);
+        if (text.Count(c => c == ',') > 0 && text.Count(c => c == '.') > 0)
+        {
+            var decimalSeparator = Math.Max(text.LastIndexOf(','), text.LastIndexOf('.'));
+            text = text[..decimalSeparator].Replace(",", string.Empty).Replace(".", string.Empty) + "." + text[(decimalSeparator + 1)..];
+        }
+        else if (text.Count(c => c == ',') == 1)
+        {
+            text = text.Replace(',', '.');
+        }
+        return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var result) ? result : 0m;
     }
 
     /// <summary>Аналог Get-PurchaseDashboardHistory (6 месяцев).</summary>
@@ -126,15 +160,14 @@ public sealed class DashboardService
         return rows;
     }
 
+    private static string FormatPeriodLabel(DashboardPeriod period) => period.Mode == DashboardPeriodMode.Month
+        ? period.Start.ToString("MMMM yyyy", Ru)
+        : $"{period.Value} квартал {period.Year}";
+
     private static Dictionary<string, object?> P(DateTime s, DateTime e) => new()
     {
         ["@s"] = s.ToString(DateFormat),
         ["@e"] = e.ToString(DateFormat)
     };
 
-    private static Dictionary<string, object?> T(DateTime t, DateTime m) => new()
-    {
-        ["@t"] = t.ToString(DateFormat),
-        ["@m"] = m.ToString(DateFormat)
-    };
 }

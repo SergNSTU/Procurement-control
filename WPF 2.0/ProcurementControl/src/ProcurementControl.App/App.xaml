@@ -30,11 +30,29 @@
             <DataTemplate DataType="{x:Type vm:RrfqViewModel}">
                 <views:RrfqView/>
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SupplierAnalyticsViewModel}">
+                <views:SupplierAnalyticsView/>
+            </DataTemplate>
             <DataTemplate DataType="{x:Type vm:QuoteBaseViewModel}">
                 <views:QuoteBaseView/>
             </DataTemplate>
             <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
                 <views:SettingsView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:InstructionsViewModel}">
+                <views:InstructionsView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:PriceSearchViewModel}">
+                <views:PriceSearchView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ExcelCompareViewModel}">
+                <views:ExcelCompareView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:BitrixViewModel}">
+                <views:BitrixView/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:HistoryViewModel}">
+                <views:HistoryView/>
             </DataTemplate>
             <DataTemplate DataType="{x:Type vm:NotesViewModel}">
                 <views:NotesView/>

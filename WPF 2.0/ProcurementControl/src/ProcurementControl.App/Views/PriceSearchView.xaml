@@ -1,0 +1,65 @@
+<UserControl x:Class="ProcurementControl.Views.PriceSearchView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ProcurementControl.Views"
+             Background="{StaticResource CanvasBrush}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Тулбар (аналог $priceSearchToolbar) -->
+        <WrapPanel Grid.Row="0" Style="{StaticResource ToolbarWrapStyle}">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="PN:" Margin="0,0,6,0"/>
+            <TextBox Width="220" Margin="0,0,14,0"
+                     Text="{Binding PnText, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Количество:" Margin="0,0,6,0"/>
+            <TextBox Width="90" Margin="0,0,14,0"
+                     Text="{Binding QtyText, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button Content="Поиск цены"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Command="{Binding SearchCommand}"
+                    Width="120" Height="32" Margin="0,0,8,0"/>
+            <Button Content="Поиск в GPT"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding SearchInGptCommand}"
+                    Width="120" Height="32"/>
+        </WrapPanel>
+
+        <!-- Сетка результатов в карточке (аналог $priceSearchGrid): двойной клик по ссылке открывает её -->
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="0" Margin="0,12,0,0">
+            <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
+                <DataGrid x:Name="ResultGrid"
+                          ItemsSource="{Binding Rows}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          BorderThickness="0"
+                          MouseDoubleClick="ResultGrid_MouseDoubleClick">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="125"/>
+                        <DataGridTextColumn Header="PN" Binding="{Binding PN}" Width="170"/>
+                        <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="150"/>
+                        <DataGridTextColumn Header="Цена" Binding="{Binding PriceText}" Width="90"/>
+                        <DataGridTextColumn Header="Валюта" Binding="{Binding Currency}" Width="80"/>
+                        <DataGridTextColumn Header="MOQ" Binding="{Binding Moq}" Width="90"/>
+                        <DataGridTextColumn Header="Запас" Binding="{Binding Stock}" Width="100"/>
+                        <DataGridTextColumn Header="Lead Time" Binding="{Binding LeadTime}" Width="120"/>
+                        <DataGridTextColumn Header="Дата" Binding="{Binding Date}" Width="145"/>
+                        <DataGridTextColumn Header="Ссылка" Binding="{Binding Link}" Width="330"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Border>
+
+        <!-- Нижняя строка: статус и ошибки -->
+        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedBrush}" FontSize="12"/>
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource DangerTextBrush}" FontSize="12"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

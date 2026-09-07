@@ -8,9 +8,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>ProcurementControl</RootNamespace>
     <AssemblyName>ProcurementControl.App</AssemblyName>
+    <ApplicationIcon>Assets\ProcurementControl.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\ProcurementControl.ico" />
+    <Resource Include="Assets\UnirecMark.png" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
   </ItemGroup>

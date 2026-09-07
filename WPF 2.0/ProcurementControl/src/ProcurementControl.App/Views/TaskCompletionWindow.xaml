@@ -1,0 +1,62 @@
+<Window x:Class="ProcurementControl.Views.TaskCompletionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Завершение задачи"
+        Width="520" Height="250"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource CanvasBrush}"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <!-- Аналог Show-TaskCompletionDialog (RRFQComparer.ps1, строки 649-702) -->
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Срок будет очищен. При необходимости измените статус и этап задачи."
+                   Foreground="{StaticResource TextBrush}"
+                   TextWrapping="Wrap" Margin="0,0,0,14"/>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="116"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Статус" Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="StatusCombo" Height="28"
+                      ItemsSource="{Binding Statuses}"
+                      SelectedItem="{Binding Status, Mode=TwoWay}"/>
+        </Grid>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="116"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Этап" Foreground="{StaticResource TextBrush}"
+                       VerticalAlignment="Center"/>
+            <ComboBox Grid.Column="1" x:Name="StageCombo" Height="28"
+                      ItemsSource="{Binding Stages}"
+                      SelectedItem="{Binding Stage, Mode=TwoWay}"/>
+        </Grid>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="Сохранить"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Click="SaveClicked"
+                    Width="100" Height="30" Margin="0,0,8,0"/>
+            <Button Content="Отмена"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Click="CancelClicked"
+                    Width="80" Height="30"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -136,6 +136,23 @@ public partial class CompelParserViewModel : ObservableObject
         }
     }
 
+    /// <summary>Выгружает Компэл в формат RRFQ и сразу добавляет его в сравнение.</summary>
+    [RelayCommand(CanExecute = nameof(CanExport))]
+    private void ExportToRrfq()
+    {
+        try
+        {
+            var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+            Directory.CreateDirectory(downloads);
+            var stem = string.IsNullOrWhiteSpace(HtmlPath) ? "Compel_RRFQ" : Path.GetFileNameWithoutExtension(HtmlPath);
+            var path = CompelRrfqExporter.WriteWorkbook(Path.Combine(downloads, stem + "_Compel.xlsx"), Rows);
+            RrfqImportQueue.Add(path, "Компэл");
+            _lastExportPath = path; CanOpenFolder = true; OpenExportFolderCommand.NotifyCanExecuteChanged();
+            SetStatus("Файл добавлен в поставщики RRFQ: " + path, isError: false);
+        }
+        catch (Exception ex) { SetStatus(ex.Message, isError: true); }
+    }
+
     [RelayCommand(CanExecute = nameof(CanOpenExportFolder))]
     private void OpenExportFolder()
     {

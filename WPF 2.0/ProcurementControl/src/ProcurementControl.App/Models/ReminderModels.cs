@@ -18,6 +18,9 @@ public sealed class ActionItemRow
 
     /// <summary>auto / deal / значение source из таблицы reminders.</summary>
     public string Source { get; set; } = string.Empty;
+
+    /// <summary>Стабильный ключ автоматического пункта для ручного удаления.</summary>
+    public string SuppressionKey { get; set; } = string.Empty;
 }
 
 /// <summary>Строка запроса поставщиков для авто-пунктов (строки 1232-1252 оригинала).</summary>
@@ -34,6 +37,7 @@ public sealed class SupplierActionRow
     public bool ErpRogerSent { get; set; }
     public bool PaymentSubmitted { get; set; }
     public bool Paid { get; set; }
+    public string PiAmountUsd { get; set; } = string.Empty;
     public string InvoiceConfirmedDate { get; set; } = string.Empty;
     public string ComponentsReceiptDate { get; set; } = string.Empty;
     public string ActualReceiptDate { get; set; } = string.Empty;

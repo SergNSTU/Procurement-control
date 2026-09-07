@@ -18,6 +18,23 @@ public static class RrfqEngine
     private static readonly Regex CurrencyWords = new("usd|eur|rub|rur", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex NumberInText = new(@"\d+(?:[\.,]\d+)?", RegexOptions.Compiled);
 
+    /// <summary>Читает квоты из одного файла для импорта в «Базу квот».</summary>
+    public static List<Quote> ReadQuotesFromWorkbook(string path, string supplier)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            throw new FileNotFoundException("Файл RRFQ не найден: " + path, path);
+        dynamic? excel = null;
+        try
+        {
+            excel = RrfqExcel.OpenExcel();
+            return GetQuotesFromWorkbook(excel, path, supplier, RrfqConfigService.Current.VatDivisor);
+        }
+        finally
+        {
+            RrfqExcel.CloseExcel(excel);
+        }
+    }
+
     // ----- Нормализация (строки 39-53) -----
 
     /// <summary>Аналог Normalize-Header.</summary>

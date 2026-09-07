@@ -1,0 +1,75 @@
+<UserControl x:Class="ProcurementControl.Views.BitrixView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ProcurementControl.Views"
+             Background="{StaticResource CanvasBrush}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Тулбар (аналог $bitrixToolbar) -->
+        <WrapPanel Grid.Row="0" Style="{StaticResource ToolbarWrapStyle}">
+            <!-- Кнопка изначально недоступна, пока интеграция не включена -->
+            <Button Content="&#x21BB;"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Command="{Binding RefreshCommand}"
+                    Width="140" Height="32" Margin="0,0,12,0"/>
+            <CheckBox Content="Подтягивание из Bitrix включено"
+                      IsChecked="{Binding IntegrationEnabled}"
+                      VerticalAlignment="Center" Margin="0,0,16,0"/>
+            <!-- Статусная строка (аналог $bitrixStatusLabel) -->
+            <TextBlock Text="{Binding StatusText}" Style="{StaticResource ToolbarStatusTextStyle}"/>
+        </WrapPanel>
+
+        <!-- Сетка задач в карточке (аналог $bitrixGrid) -->
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="0" Margin="0,10,0,0">
+            <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
+                <DataGrid x:Name="TasksGrid"
+                          ItemsSource="{Binding Tasks}"
+                          SelectedItem="{Binding SelectedTask}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          BorderThickness="0"
+                          MouseDoubleClick="TasksGrid_MouseDoubleClick">
+                    <DataGrid.ContextMenu>
+                        <!-- Контекстное меню оригинала ($bitrixMenu) -->
+                        <ContextMenu>
+                            <MenuItem Header="Скопировать номер..."
+                                      Command="{Binding CopyNumberCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="Заблокировать задачу"
+                                      Command="{Binding BlockTaskCommand}"/>
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="ID" Binding="{Binding TaskId}" Width="60"/>
+                        <DataGridTextColumn Header="Наименование" Binding="{Binding Title}" Width="*"/>
+                        <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="150"/>
+                        <DataGridTextColumn Header="RFQ" Binding="{Binding RfqStatus}" Width="120"/>
+                        <DataGridTextColumn Header="Дедлайн" Binding="{Binding Deadline}" Width="130"/>
+                        <DataGridTextColumn Header="Ссылка" Binding="{Binding LinkText}" Width="80">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="TextAlignment" Value="Center"/>
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Border>
+
+        <!-- Подсказка (аналог $bitrixHint) -->
+        <TextBlock Grid.Row="2" Margin="0,8,0,0"
+                   Text="Проект: Заявка на расчет КС в РФ (ID=27)"
+                   Foreground="{StaticResource MutedBrush}"
+                   FontSize="12"
+                   VerticalAlignment="Center"/>
+    </Grid>
+</UserControl>

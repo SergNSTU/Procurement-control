@@ -17,6 +17,17 @@ public sealed class TaskRow
     public string DeadlineDate { get; set; } = string.Empty;
     public string Priority { get; set; } = "3";
     public string Period { get; set; } = string.Empty;
+    public string OrderAmount { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
     public string UpdatedAt { get; set; } = string.Empty;
+
+    /// <summary>Напоминание сегодня или в прошлом — красная ячейка, как в исходном приложении.</summary>
+    public bool ReminderOverdue
+    {
+        get
+        {
+            var date = PurchaseFormatting.ParseDate(ReminderDate);
+            return date is not null && date.Value.Date <= DateTime.Today;
+        }
+    }
 }

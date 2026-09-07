@@ -47,6 +47,15 @@ public sealed class RecoverySnapshot
 /// </summary>
 public sealed class RecoveryRow
 {
+    /// <summary>«Trash» или «Backup» — аналог поля Type из Get-SelectedRecoveryItem оригинала.</summary>
+    public string RecoveryType { get; init; } = string.Empty;
+
+    /// <summary>Для записи корзины — её id в таблице trash_items.</summary>
+    public long TrashId { get; init; }
+
+    /// <summary>Для резервной копии — путь к zip-архиву.</summary>
+    public string SnapshotPath { get; init; } = string.Empty;
+
     /// <summary>«Корзина» или «Резервная копия».</summary>
     public string KindText { get; init; } = string.Empty;
 

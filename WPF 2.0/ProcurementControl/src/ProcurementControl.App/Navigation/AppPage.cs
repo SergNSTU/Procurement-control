@@ -8,6 +8,7 @@ public enum AppPage
 {
     Dashboard,
     Rrfq,
+    SupplierAnalytics,
     Bitrix,
     Purchase,
     Components,

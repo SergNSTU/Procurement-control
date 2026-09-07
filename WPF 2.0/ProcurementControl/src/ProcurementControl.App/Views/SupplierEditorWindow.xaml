@@ -1,0 +1,45 @@
+<Window x:Class="ProcurementControl.Views.SupplierEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Карточка поставщика" Width="760" Height="640"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Сохранить" Style="{StaticResource PrimaryButtonStyle}" Width="110" Height="30" Margin="0,0,8,0" Click="SaveClick"/>
+            <Button Content="Отмена" Style="{StaticResource SecondaryButtonStyle}" Width="90" Height="30" IsCancel="True" Click="CancelClick"/>
+        </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="185"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="Поставщик" Style="{StaticResource FieldLabel}"/>
+                <TextBlock x:Name="SupplierName" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold"/>
+                <CheckBox x:Name="InvoiceReceived" Grid.Row="1" Grid.ColumnSpan="2" Content="Инвойс получен" Margin="0,10,0,0"/>
+                <CheckBox x:Name="InvoiceConfirmed" Grid.Row="2" Grid.ColumnSpan="2" Content="Инвойс подтверждён" Margin="0,8,0,0"/>
+                <CheckBox x:Name="SupplierOrderCreated" Grid.Row="3" Grid.ColumnSpan="2" Content="Заказ поставщику создан" Margin="0,8,0,0"/>
+                <CheckBox x:Name="ErpSupplierSent" Grid.Row="4" Grid.ColumnSpan="2" Content="ERP поставщику отправлен" Margin="0,8,0,0"/>
+                <CheckBox x:Name="ErpRogerSent" Grid.Row="5" Grid.ColumnSpan="2" Content="ERP Roger отправлен" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="6" Text="Сумма PI, USD" Style="{StaticResource FieldLabel}" Margin="0,10,0,0"/><TextBox x:Name="PiUsd" Grid.Row="6" Grid.Column="1" Margin="0,10,0,0"/>
+                <TextBlock Grid.Row="7" Text="Сумма PI, CNY" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PiCny" Grid.Row="7" Grid.Column="1"/>
+                <TextBlock Grid.Row="8" Text="Сумма PI, RUB" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PiRub" Grid.Row="8" Grid.Column="1"/>
+                <TextBlock Grid.Row="9" Text="Оплачено" Style="{StaticResource FieldLabel}"/><TextBox x:Name="PaidAmount" Grid.Row="9" Grid.Column="1"/>
+                <TextBlock Grid.Row="10" Text="Срок, недели" Style="{StaticResource FieldLabel}"/><TextBox x:Name="DeliveryWeeks" Grid.Row="10" Grid.Column="1"/>
+                <CheckBox x:Name="PaymentSubmitted" Grid.Row="11" Grid.ColumnSpan="2" Content="Подано в оплату" Margin="0,8,0,0"/>
+                <CheckBox x:Name="Paid" Grid.Row="12" Grid.ColumnSpan="2" Content="Оплачено" Margin="0,8,0,0"/>
+                <TextBlock Grid.Row="13" Text="Дата подтверждения" Style="{StaticResource FieldLabel}" Margin="0,10,0,0"/>
+                <DockPanel Grid.Row="13" Grid.Column="1" Margin="0,10,0,0"><Button Content="…" Width="30" DockPanel.Dock="Right" Margin="6,0,0,0" Click="PickDateClick" Tag="InvoiceConfirmedDate"/><TextBox x:Name="InvoiceConfirmedDate"/></DockPanel>
+                <TextBlock Grid.Row="14" Text="План поступления" Style="{StaticResource FieldLabel}"/>
+                <DockPanel Grid.Row="14" Grid.Column="1"><Button Content="…" Width="30" DockPanel.Dock="Right" Margin="6,0,0,0" Click="PickDateClick" Tag="ComponentsReceiptDate"/><TextBox x:Name="ComponentsReceiptDate"/></DockPanel>
+                <TextBlock Grid.Row="15" Text="Факт поступления" Style="{StaticResource FieldLabel}"/>
+                <DockPanel Grid.Row="15" Grid.Column="1"><Button Content="…" Width="30" DockPanel.Dock="Right" Margin="6,0,0,0" Click="PickDateClick" Tag="ActualReceiptDate"/><TextBox x:Name="ActualReceiptDate"/></DockPanel>
+                <TextBlock Grid.Row="16" Text="Комментарий" Style="{StaticResource FieldLabel}" Margin="0,8,0,0"/><TextBox x:Name="Comment" Grid.Row="16" Grid.Column="1" MinHeight="60" AcceptsReturn="True" TextWrapping="Wrap" Margin="0,8,0,0"/>
+            </Grid>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

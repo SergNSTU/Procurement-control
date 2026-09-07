@@ -25,6 +25,28 @@ public sealed class PurchaseRepository
             new Dictionary<string, object?> { ["@key"] = key });
     }
 
+    /// <summary>Годы, встречающиеся в датах дашборда по обоим направлениям.</summary>
+    public IReadOnlyList<int> GetDashboardYears()
+    {
+        const string sql = @"
+SELECT DISTINCT year FROM (
+    SELECT CAST(SUBSTR(created_at, 1, 4) AS INTEGER) AS year FROM deals WHERE LENGTH(IFNULL(created_at, '')) >= 4
+    UNION
+    SELECT CAST(SUBSTR(ordered_at, 1, 4) AS INTEGER) FROM deals WHERE LENGTH(IFNULL(ordered_at, '')) >= 4
+    UNION
+    SELECT CAST(SUBSTR(created_at, 1, 4) AS INTEGER) FROM component_deals WHERE LENGTH(IFNULL(created_at, '')) >= 4
+    UNION
+    SELECT CAST(SUBSTR(ordered_at, 1, 4) AS INTEGER) FROM component_deals WHERE LENGTH(IFNULL(ordered_at, '')) >= 4
+) WHERE year BETWEEN 2000 AND 2100 ORDER BY year DESC;";
+
+        var years = new List<int>();
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) years.Add(reader.GetInt32(0));
+        return years;
+    }
+
     /// <summary>
     /// Аналог Get-ComponentDeals из PurchaseStore.ps1: список задач (component_deals)
     /// с поиском по номеру сделки и описанию, новые сверху.
@@ -45,6 +67,7 @@ SELECT
     IFNULL(deadline_date, '') AS deadline_date,
     IFNULL(priority, '3') AS priority,
     IFNULL(period, '') AS period,
+    IFNULL(order_amount, '') AS order_amount,
     IFNULL(notes, '') AS notes,
     updated_at
 FROM component_deals
@@ -73,8 +96,9 @@ ORDER BY id DESC";
                 DeadlineDate = reader.GetString(8),
                 Priority = reader.GetString(9),
                 Period = reader.GetString(10),
-                Notes = reader.GetString(11),
-                UpdatedAt = reader.IsDBNull(12) ? string.Empty : reader.GetString(12),
+                OrderAmount = reader.GetString(11),
+                Notes = reader.GetString(12),
+                UpdatedAt = reader.IsDBNull(13) ? string.Empty : reader.GetString(13),
             });
         }
         return result;
@@ -96,7 +120,7 @@ SELECT
     IFNULL(d.executor, '') AS executor,
     IFNULL(d.reminder_date, '') AS reminder_date,
     IFNULL(d.assembly_location, '') AS assembly_location,
-    IFNULL(d.priority, '3') AS priority,
+    COALESCE(NULLIF(TRIM(d.priority), ''), '3') AS priority,
     IFNULL(d.tracking_status, 'Ожидание') AS tracking_status,
     IFNULL(d.status, 'RFQ') AS status,
     IFNULL(d.masks, 0) AS masks,
@@ -131,7 +155,9 @@ LEFT JOIN (
     FROM deal_suppliers
     GROUP BY deal_id
 ) stats ON stats.deal_id = d.id
-ORDER BY d.updated_at DESC, d.id DESC";
+-- Порядок списка фиксирован по «Этапу»: правка сделки обновляет updated_at,
+-- но не переставляет её среди остальных строк.
+ORDER BY d.status COLLATE NOCASE ASC, d.id ASC";
 
         var result = new List<PurchaseDealRow>();
         using var command = _connection.CreateCommand();
@@ -252,6 +278,7 @@ SELECT
     ds.erp_roger_sent,
     ds.payment_submitted,
     ds.paid,
+    IFNULL(ds.pi_amount_usd, '') AS pi_amount_usd,
     ds.invoice_confirmed_date,
     ds.components_receipt_date,
     IFNULL(ds.actual_receipt_date, '') AS actual_receipt_date,
@@ -281,13 +308,47 @@ ORDER BY d.updated_at DESC, d.deal_number, ds.supplier";
                 ErpRogerSent = Bool(reader, 8),
                 PaymentSubmitted = Bool(reader, 9),
                 Paid = Bool(reader, 10),
-                InvoiceConfirmedDate = Text(reader, 11),
-                ComponentsReceiptDate = Text(reader, 12),
-                ActualReceiptDate = Text(reader, 13),
-                DeliveryWeeks = Text(reader, 14),
+                PiAmountUsd = Text(reader, 11),
+                InvoiceConfirmedDate = Text(reader, 12),
+                ComponentsReceiptDate = Text(reader, 13),
+                ActualReceiptDate = Text(reader, 14),
+                DeliveryWeeks = Text(reader, 15),
             });
         }
         return result;
+    }
+
+    /// <summary>USD-суммы поставщиков только сделок, заказанных в выбранный период.</summary>
+    public IReadOnlyList<DashboardSupplierAmountRow> GetOrderedDealSupplierAmounts(DateTime start, DateTime end)
+    {
+        const string sql = @"
+SELECT ds.deal_id, IFNULL(ds.pi_amount_usd, '')
+FROM deals d JOIN deal_suppliers ds ON ds.deal_id = d.id
+WHERE IFNULL(d.ordered_at, '') <> '' AND d.ordered_at >= @start AND d.ordered_at < @end;";
+        var rows = new List<DashboardSupplierAmountRow>();
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@start", start.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.Parameters.AddWithValue("@end", end.ToString("yyyy-MM-dd HH:mm:ss"));
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) rows.Add(new DashboardSupplierAmountRow(reader.GetInt64(0), Text(reader, 1)));
+        return rows;
+    }
+
+    /// <summary>Суммы компонентов, заказанных в выбранный период.</summary>
+    public IReadOnlyList<string> GetOrderedComponentAmounts(DateTime start, DateTime end)
+    {
+        const string sql = @"
+SELECT IFNULL(order_amount, '') FROM component_deals
+WHERE IFNULL(ordered_at, '') <> '' AND ordered_at >= @start AND ordered_at < @end;";
+        var amounts = new List<string>();
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("@start", start.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.Parameters.AddWithValue("@end", end.ToString("yyyy-MM-dd HH:mm:ss"));
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) amounts.Add(Text(reader, 0));
+        return amounts;
     }
 
     /// <summary>
@@ -351,6 +412,21 @@ ORDER BY
                 Source = Text(reader, 6),
             });
         }
+        return result;
+    }
+
+    /// <summary>Ключи автоматических напоминаний, удалённых пользователем.</summary>
+    public HashSet<string> GetAutomaticReminderSuppressions()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = "SELECT reminder_key FROM reminder_suppressions;";
+        using var reader = command.ExecuteReader();
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            result.Add(reader.GetString(0));
+        }
+
         return result;
     }
 

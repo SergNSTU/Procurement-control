@@ -1,0 +1,44 @@
+<UserControl x:Class="ProcurementControl.Views.InstructionsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ProcurementControl.Views"
+             Background="{StaticResource CanvasBrush}">
+    <Grid Margin="18">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="230"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Список разделов в карточке (аналог $instructionsList) -->
+        <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="0" Margin="0,0,12,0">
+            <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
+                <ListBox ItemsSource="{Binding Sections}"
+                         SelectedItem="{Binding SelectedSection, Mode=TwoWay}"
+                         DisplayMemberPath="Title"
+                         Background="{StaticResource SurfaceBrush}"
+                         Foreground="{StaticResource TextBrush}"
+                         BorderThickness="0"
+                         FontSize="13"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="14,8"/>
+                            <Setter Property="Cursor" Value="Hand"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Border>
+        </Border>
+
+        <!-- Текст выбранного раздела в карточке (аналог $instructionsText) -->
+        <Border Grid.Column="1" Style="{StaticResource CardStyle}" Padding="20">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock Text="{Binding SelectedSection.Body, FallbackValue=''}"
+                           FontSize="13"
+                           Foreground="{StaticResource TextBrush}"
+                           TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>

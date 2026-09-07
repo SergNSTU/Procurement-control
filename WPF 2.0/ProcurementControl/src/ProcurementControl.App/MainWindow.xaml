@@ -3,11 +3,22 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:nav="clr-namespace:ProcurementControl.Navigation"
         Title="Procurement control"
+        Icon="Assets/UnirecMark.png"
         Width="1480" Height="900"
         MinWidth="1280" MinHeight="760"
         WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
         FontFamily="Segoe UI"
         Background="{StaticResource CanvasBrush}">
+
+    <!-- Тонкая системная рамка: перетаскивание и изменение размера без стандартного заголовка -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="46"
+                      ResizeBorderThickness="5"
+                      GlassFrameThickness="0,0,0,1"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
 
     <Window.Resources>
         <!-- Шаблон пункта-страницы: иконка (Segoe MDL2) + подпись -->
@@ -34,31 +45,97 @@
         <nav:NavItemContainerStyleSelector x:Key="NavContainerStyleSelector"
                                            PageStyle="{StaticResource NavItemStyle}"
                                            DividerStyle="{StaticResource NavDividerContainerStyle}"/>
+
+        <!-- Кнопки управления окном -->
+        <Style x:Key="CaptionButton" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource SurfaceAltBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource LineBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Крестик: красный фон при наведении (как в стандартных окнах) -->
+        <Style x:Key="CloseCaptionButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter x:Name="Cp" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                <Setter TargetName="Cp" Property="TextElement.Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#F1707A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
+        <!-- Тонкая граница окна (заменяет системную рамку при WindowStyle="None") -->
+        <Border BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" IsHitTestVisible="False"
+                Panel.ZIndex="100"/>
+
+        <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Левая навигационная панель (аналог navPanel, ширина 240) -->
-        <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}">
+        <!-- Левая навигационная панель: тёмная, с логотипом (аналог navPanel, ширина 240) -->
+        <Border Grid.Column="0" Background="{StaticResource NavBrush}">
             <DockPanel>
-                <!-- Заголовок приложения (аналог navTitle) -->
-                <TextBlock DockPanel.Dock="Top"
-                           Text="Procurement control"
-                           FontSize="15"
-                           FontWeight="Bold"
-                           Foreground="{StaticResource TextBrush}"
-                           VerticalAlignment="Center"
-                           Margin="16,16,16,12"/>
+                <!-- Заголовок приложения в навигации. -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,18,16,18">
+                    <Border Width="30" Height="30" CornerRadius="8"
+                            Background="{StaticResource PrimaryBrush}"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="&#xE7BF;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                   Foreground="White"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Margin="10,0,0,0">
+                        <TextBlock Text="Procurement control"
+                                   FontSize="14" FontWeight="Bold"
+                                   Foreground="{StaticResource NavSelectedTextBrush}"/>
+                        <TextBlock Text="Контроль закупки"
+                                   FontSize="10"
+                                   Foreground="{StaticResource NavMutedBrush}"/>
+                    </StackPanel>
+                </StackPanel>
 
                 <!-- Подсказка внизу (аналог navHint) -->
                 <TextBlock DockPanel.Dock="Bottom"
                            Text="Данные закупки хранятся внутри папки приложения."
                            FontSize="11"
-                           Foreground="{StaticResource MutedBrush}"
+                           Foreground="{StaticResource NavMutedBrush}"
                            TextWrapping="Wrap"
                            VerticalAlignment="Bottom"
                            Margin="16,0,16,14"/>
@@ -77,20 +154,34 @@
 
         <!-- Разделительная линия между колонками -->
         <Border Grid.Column="0" Width="1" HorizontalAlignment="Right"
-                Background="{StaticResource LineBrush}"/>
+                Background="{StaticResource NavDividerBrush}"/>
 
-        <!-- Правая область: заголовок раздела + активная страница -->
+        <!-- Правая область: заголовок раздела + кнопки окна + активная страница -->
         <DockPanel Grid.Column="1">
             <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1"
-                    Padding="18,12">
-                <TextBlock Text="{Binding CurrentPageTitle}"
-                           FontSize="16"
-                           FontWeight="SemiBold"
-                           Foreground="{StaticResource TextBrush}"/>
+                    Padding="18,12,0,12">
+                <DockPanel>
+                    <!-- Крестик закрытия и управление окном (аналог кнопок оригинальной формы) -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,-12,0,-12">
+                        <Button Style="{StaticResource CaptionButton}" Content="&#xE921;"
+                                ToolTip="Свернуть" Click="MinimizeWindow"/>
+                        <Button x:Name="MaximizeButton" Style="{StaticResource CaptionButton}" Content="&#xE922;"
+                                ToolTip="Развернуть" Click="ToggleMaximize"/>
+                        <Button x:Name="CloseButton" Style="{StaticResource CloseCaptionButton}" Content="&#xE8BB;"
+                                FontSize="11" ToolTip="Закрыть приложение" Click="CloseWindow"/>
+                    </StackPanel>
+
+                    <TextBlock Text="{Binding CurrentPageTitle}"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource TextBrush}"/>
+                </DockPanel>
             </Border>
 
             <ContentControl Content="{Binding CurrentViewModel}"/>
         </DockPanel>
+        </Grid>
     </Grid>
 </Window>

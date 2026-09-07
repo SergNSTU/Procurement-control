@@ -16,6 +16,9 @@ public sealed class QuoteHistoryRow
 
     public string PN { get; init; } = string.Empty;
 
+    /// <summary>Количество из исходного RFQ, для которого поставщик дал цену.</summary>
+    public string RequestedQuantity { get; init; } = string.Empty;
+
     public string Supplier { get; init; } = string.Empty;
 
     public double? UnitPrice { get; init; }

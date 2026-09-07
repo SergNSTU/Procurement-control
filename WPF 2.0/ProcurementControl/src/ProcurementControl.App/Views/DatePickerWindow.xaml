@@ -1,0 +1,17 @@
+<Window x:Class="ProcurementControl.Views.DatePickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Выбор даты" Width="360" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource CanvasBrush}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <TextBlock x:Name="PromptText" Grid.Row="0" Style="{StaticResource FieldLabel}" Margin="0,0,0,8"/>
+        <DatePicker x:Name="DateBox" Grid.Row="1" SelectedDateFormat="Short"/>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Очистить" Style="{StaticResource SecondaryButtonStyle}" Width="86" Height="30" Margin="0,0,8,0" Click="ClearClick"/>
+            <Button Content="ОК" Style="{StaticResource PrimaryButtonStyle}" Width="82" Height="30" Margin="0,0,8,0" Click="AcceptClick" IsDefault="True"/>
+            <Button Content="Отмена" Style="{StaticResource SecondaryButtonStyle}" Width="82" Height="30" Click="CancelClick" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

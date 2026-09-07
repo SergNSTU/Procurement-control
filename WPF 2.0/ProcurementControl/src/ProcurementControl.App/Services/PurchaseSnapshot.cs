@@ -19,6 +19,15 @@ public sealed class PurchaseSnapshot : IDisposable
 
     public SqliteConnection Connection { get; }
 
+    /// <summary>
+    /// Путь к временной копии базы, если снапшот создан копированием.
+    /// Для ReadOnly-фолбэка — <c>null</c>. Используется резервными копиями,
+    /// чтобы положить в архив уже прочекпоинченную копию.
+    /// </summary>
+    public string? SnapshotDatabasePath => string.IsNullOrEmpty(_snapshotDir)
+        ? null
+        : Path.Combine(_snapshotDir, "purchase_control.sqlite");
+
     private PurchaseSnapshot(string snapshotDir, SqliteConnection connection)
     {
         _snapshotDir = snapshotDir;

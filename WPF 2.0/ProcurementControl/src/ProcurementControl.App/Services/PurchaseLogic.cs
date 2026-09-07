@@ -64,9 +64,7 @@ public static class PurchaseLogic
                 keep = filter switch
                 {
                     DealFilter.Tracking => row.Executor.Trim().Length > 0,
-                    DealFilter.Purchase => row.Status.Trim() == "Закупка",
                     DealFilter.Pause => row.Status.Trim() is "RRFQ" or "PI",
-                    DealFilter.WaitingReceipt => row.SupplierCount > 0 && row.ReceiptCount < row.SupplierCount,
                     DealFilter.Done => row.Status.Trim() == "Заказано"
                         && row.SupplierCount > 0
                         && row.InvoiceConfirmedCount == row.SupplierCount,
@@ -117,7 +115,7 @@ public static class PurchaseLogic
     /// Метрики карточек: перенос Update-PurchaseCockpitMetrics и
     /// Get-ActiveCockpitDealCount (дедупликация по ключу сделки).
     /// </summary>
-    public static (int Active, int Overdue, int DueToday, int Attention) ComputeMetrics(
+    public static (int Active, int Overdue, int WorkAndPaymentTasks, int Attention) ComputeMetrics(
         IReadOnlyList<PurchaseDealRow> rows,
         IReadOnlyList<CockpitTaskKey> taskKeys)
     {
@@ -157,7 +155,6 @@ public static class PurchaseLogic
 
         var today = DateTime.Today;
         var overdue = 0;
-        var dueToday = 0;
         var attention = 0;
         foreach (var row in rows)
         {
@@ -169,10 +166,6 @@ public static class PurchaseLogic
                 {
                     overdue++;
                 }
-                if (receipt.Value.Date == today)
-                {
-                    dueToday++;
-                }
             }
             if (row.Archived != 1 && row.SupplierCount > 0 && row.InvoiceConfirmedCount < row.SupplierCount)
             {
@@ -180,7 +173,7 @@ public static class PurchaseLogic
             }
         }
 
-        return (keys.Count, overdue, dueToday, attention);
+        return (keys.Count, overdue, taskKeys.Count, attention);
     }
 
     private static string DealKey(string dealNumber, long id, string prefix)
@@ -216,7 +209,8 @@ public static class PurchaseLogic
         IReadOnlyList<SupplierActionRow> suppliers,
         IReadOnlyList<DealReminderRow> dealReminders,
         IReadOnlyList<ManualReminderRow> manuals,
-        DateTime today)
+        DateTime today,
+        IReadOnlySet<string>? suppressedAutomaticKeys = null)
     {
         var items = new List<ActionItemRow>();
 
@@ -224,35 +218,40 @@ public static class PurchaseLogic
         {
             var prefix = row.DealNumber + " / " + row.Supplier;
 
+            if (string.IsNullOrWhiteSpace(row.PiAmountUsd))
+            {
+                    AddAutoItem(items, row, "Warn", prefix + ": не указана сумма PI в USD", "", suppressedAutomaticKeys);
+            }
+
             if (!row.InvoiceReceived)
             {
-                items.Add(AutoItem(row, "Warn", prefix + ": нет PI", ""));
+                AddAutoItem(items, row, "Warn", prefix + ": нет PI", "", suppressedAutomaticKeys);
                 continue;
             }
 
             if (!row.PaymentSubmitted)
             {
-                items.Add(AutoItem(row, "Info", prefix + ": PI есть, но не подан в оплату", ""));
+                AddAutoItem(items, row, "Info", prefix + ": PI есть, но не подан в оплату", "", suppressedAutomaticKeys);
             }
             else if (!row.Paid)
             {
-                items.Add(AutoItem(row, "Attention", prefix + ": подан в оплату, но не оплачен", ""));
+                AddAutoItem(items, row, "Attention", prefix + ": подан в оплату, но не оплачен", "", suppressedAutomaticKeys);
             }
 
             if (string.IsNullOrWhiteSpace(row.InvoiceConfirmedDate))
             {
-                items.Add(AutoItem(row, "Warn", prefix + ": нет даты подтверждения инвойса", ""));
+                AddAutoItem(items, row, "Warn", prefix + ": нет даты подтверждения инвойса", "", suppressedAutomaticKeys);
             }
 
             if (!IsErpNotRequired(row.Supplier))
             {
                 if (!row.ErpSupplierSent)
                 {
-                    items.Add(AutoItem(row, "Info", prefix + ": Не отправлен ERP поставщику", ""));
+                    AddAutoItem(items, row, "Info", prefix + ": Не отправлен ERP поставщику", "", suppressedAutomaticKeys);
                 }
                 if (!row.ErpRogerSent)
                 {
-                    items.Add(AutoItem(row, "Info", prefix + ": Не отправлен ERP заказ", ""));
+                    AddAutoItem(items, row, "Info", prefix + ": Не отправлен ERP заказ", "", suppressedAutomaticKeys);
                 }
             }
 
@@ -264,11 +263,11 @@ public static class PurchaseLogic
                 var days = (int)(receiptDate.Value.Date - today).TotalDays;
                 if (days < 0)
                 {
-                    items.Add(AutoItem(row, "Danger", prefix + ": поступление просрочено", receiptDate.Value.ToString("dd.MM.yyyy")));
+                    AddAutoItem(items, row, "Danger", prefix + ": поступление просрочено", receiptDate.Value.ToString("dd.MM.yyyy"), suppressedAutomaticKeys);
                 }
                 else if (days <= 7)
                 {
-                    items.Add(AutoItem(row, "Attention", prefix + ": скоро поступление", receiptDate.Value.ToString("dd.MM.yyyy")));
+                    AddAutoItem(items, row, "Attention", prefix + ": скоро поступление", receiptDate.Value.ToString("dd.MM.yyyy"), suppressedAutomaticKeys);
                 }
             }
         }
@@ -306,7 +305,20 @@ public static class PurchaseLogic
         return items;
     }
 
-    private static ActionItemRow AutoItem(SupplierActionRow row, string severity, string title, string dueDate)
+    private static void AddAutoItem(List<ActionItemRow> items, SupplierActionRow row, string severity, string title, string dueDate, IReadOnlySet<string>? suppressedKeys)
+    {
+        var key = AutomaticReminderKey(row, title);
+        if (suppressedKeys?.Contains(key) == true) return;
+        items.Add(AutoItem(row, severity, title, dueDate, key));
+    }
+
+    public static string AutomaticReminderKey(long dealId, long supplierId, string title)
+        => $"auto:{dealId}:{supplierId}:{title}";
+
+    private static string AutomaticReminderKey(SupplierActionRow row, string title)
+        => AutomaticReminderKey(row.DealId, row.SupplierId, title);
+
+    private static ActionItemRow AutoItem(SupplierActionRow row, string severity, string title, string dueDate, string key)
         => new()
         {
             DealId = row.DealId,
@@ -315,6 +327,7 @@ public static class PurchaseLogic
             Title = title,
             DueDate = dueDate,
             Source = "auto",
+            SuppressionKey = key,
         };
 
     /// <summary>Важность датного пункта: не парсится -> Warn, прошло -> Danger, <=7 дней -> Attention.</summary>

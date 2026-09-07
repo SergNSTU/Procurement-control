@@ -1,0 +1,136 @@
+<UserControl x:Class="ProcurementControl.Views.SupplierAnalyticsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource CanvasBrush}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <WrapPanel Grid.Row="0" Style="{StaticResource ToolbarWrapStyle}">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Производитель:" Margin="0,0,8,0"/>
+            <TextBox Width="240" Text="{Binding ManufacturerSearch, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Поставщик:" Margin="12,0,8,0"/>
+            <TextBox Width="150" Text="{Binding SupplierSearch, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button Content="Рекомендовать" Width="125" Height="30" Margin="8,0,0,0"
+                    Style="{StaticResource PrimaryButtonStyle}" Command="{Binding RecommendCommand}"/>
+            <Button Content="Обновить" Width="95" Height="30" Margin="8,0,0,0"
+                    Style="{StaticResource SecondaryButtonStyle}" Command="{Binding RefreshCommand}"/>
+            <TextBlock Text="С:" Style="{StaticResource FieldLabel}" Margin="14,0,5,0"/>
+            <TextBox Width="90" Text="{Binding DateFromText, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock Text="По:" Style="{StaticResource FieldLabel}" Margin="8,0,5,0"/>
+            <TextBox Width="90" Text="{Binding DateToText, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock Text="дд.мм.гггг" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+        </WrapPanel>
+
+        <TextBlock Grid.Row="1" Text="{Binding SummaryText}" Foreground="{StaticResource MutedBrush}"
+                   TextWrapping="Wrap" Margin="0,10,0,10"/>
+
+        <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+            <TabItem Header="Рекомендация">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Топ поставщиков для нового PN. Оценка 0–100; winner-only записи в рейтинг не входят."
+                               Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8"/>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Recommendations}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=AlternationIndex}" Width="35"/>
+                            <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="160"/>
+                            <DataGridTextColumn Header="Оценка" Binding="{Binding ScoreText}" Width="75"/>
+                            <DataGridTextColumn Header="Доверие" Binding="{Binding Confidence}" Width="90"/>
+                            <DataGridTextColumn Header="Сравнений" Binding="{Binding ComparisonsText}" Width="85"/>
+                            <DataGridTextColumn Header="Цена" Binding="{Binding PriceCompetitivenessText}" Width="85"/>
+                            <DataGridTextColumn Header="Лучшая цена" Binding="{Binding BestPriceRateText}" Width="100"/>
+                            <DataGridTextColumn Header="Ответы" Binding="{Binding ResponseRateText}" Width="80"/>
+                            <DataGridTextColumn Header="Срок" Binding="{Binding AverageLeadText}" Width="90"/>
+                            <DataGridTextColumn Header="Почему" Binding="{Binding Explanation}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Статистика">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Button Grid.Row="0" Content="Пересчитать статистику" Width="170" Height="28" HorizontalAlignment="Left"
+                            Style="{StaticResource SecondaryButtonStyle}" Command="{Binding LoadStatisticsCommand}"/>
+                    <Grid Grid.Row="1" Margin="0,8,0,0">
+                        <Grid.RowDefinitions><RowDefinition Height="65*"/><RowDefinition Height="6"/><RowDefinition Height="35*"/></Grid.RowDefinitions>
+                    <DataGrid Grid.Row="0" ItemsSource="{Binding StatisticsRows}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="170"/>
+                            <DataGridTextColumn Header="Оценка" Binding="{Binding ScoreText}" Width="80"/>
+                            <DataGridTextColumn Header="Сравнений" Binding="{Binding ComparisonsText}" Width="90"/>
+                            <DataGridTextColumn Header="Конкурентность цены" Binding="{Binding PriceCompetitivenessText}" Width="145"/>
+                            <DataGridTextColumn Header="Доля лучшей цены" Binding="{Binding BestPriceRateText}" Width="130"/>
+                            <DataGridTextColumn Header="Частота ответа" Binding="{Binding ResponseRateText}" Width="120"/>
+                            <DataGridTextColumn Header="Средний срок" Binding="{Binding AverageLeadText}" Width="105"/>
+                            <DataGridTextColumn Header="Доверие" Binding="{Binding Confidence}" Width="90"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" Background="{StaticResource LineBrush}"/>
+                    <DataGrid Grid.Row="2" ItemsSource="{Binding MonthlyTrend}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Месяц" Binding="{Binding Month}" Width="100"/>
+                            <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="170"/>
+                            <DataGridTextColumn Header="Сравнений" Binding="{Binding ComparisonsText}" Width="90"/>
+                            <DataGridTextColumn Header="Конкурентность цены" Binding="{Binding PriceText}" Width="150"/>
+                            <DataGridTextColumn Header="Лучшая цена" Binding="{Binding BestText}" Width="120"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Сборки">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions><RowDefinition Height="45*"/><RowDefinition Height="6"/><RowDefinition Height="55*"/></Grid.RowDefinitions>
+                    <DataGrid Grid.Row="0" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Дата" Binding="{Binding CreatedAt}" Width="145"/>
+                            <DataGridTextColumn Header="Источник" Binding="{Binding SourceKind}" Width="115"/>
+                            <DataGridTextColumn Header="Качество" Binding="{Binding DataQuality}" Width="100"/>
+                            <DataGridTextColumn Header="Позиций" Binding="{Binding PositionCount}" Width="75"/>
+                            <DataGridTextColumn Header="Квот" Binding="{Binding QuoteCount}" Width="65"/>
+                            <DataGridTextColumn Header="RFQ" Binding="{Binding FileName}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" Background="{StaticResource LineBrush}"/>
+                    <DataGrid Grid.Row="2" ItemsSource="{Binding BatchQuotes}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Позиция" Binding="{Binding RfqValue}" Width="180"/>
+                            <DataGridTextColumn Header="PN" Binding="{Binding PN}" Width="140"/>
+                            <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="150"/>
+                            <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="140"/>
+                            <DataGridTextColumn Header="Цена" Binding="{Binding PriceText}" Width="100"/>
+                            <DataGridTextColumn Header="Срок" Binding="{Binding LeadTime}" Width="100"/>
+                            <DataGridTextColumn Header="Победитель" Binding="{Binding WinnerText}" Width="90"/>
+                            <DataGridTextColumn Header="Качество" Binding="{Binding DataQuality}" Width="100"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Алиасы">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock Text="Выберите строку со статусом «Не разобрано», затем укажите канонического производителя." Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8"/>
+                        <WrapPanel>
+                            <Button Content="Создать производителя" Width="170" Height="28" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding CreateManufacturerCommand}"/>
+                            <ComboBox Width="280" Height="28" Margin="8,0,0,0" ItemsSource="{Binding Manufacturers}" DisplayMemberPath="Name" SelectedItem="{Binding SelectedTargetManufacturer, Mode=TwoWay}"/>
+                            <Button Content="Привязать выбранный алиас" Width="190" Height="28" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding AssignAliasCommand}"/>
+                            <Button Content="Объединить" Width="110" Height="28" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding MergeManufacturerCommand}"/>
+                        </WrapPanel>
+                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Aliases}" SelectedItem="{Binding SelectedAlias, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="105"/>
+                            <DataGridTextColumn Header="Алиас" Binding="{Binding Alias}" Width="260"/>
+                            <DataGridTextColumn Header="Канонический производитель" Binding="{Binding Manufacturer}" Width="260"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

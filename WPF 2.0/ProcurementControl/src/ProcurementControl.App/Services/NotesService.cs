@@ -4,7 +4,10 @@ using System.Text;
 namespace ProcurementControl.Services;
 
 /// <summary>Одна заметка: отображаемое имя и полный путь к файлу.</summary>
-public sealed record NoteFile(string Name, string Path);
+public sealed record NoteFile(string Name, string Path)
+{
+    public override string ToString() => Name;
+}
 
 /// <summary>
 /// Работа с заметками. Переносит логику из app/modules/PurchaseStore.ps1:
@@ -63,6 +66,30 @@ public sealed class NotesService
         File.WriteAllText(target, text ?? string.Empty, new UTF8Encoding(false));
     }
 
+    public NoteFile Rename(string path, string title)
+    {
+        var source = ValidateNotePath(path);
+        var target = Path.Combine(AppPaths.NotesDirectory, GetSafeNoteFileName(title));
+        if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
+        {
+            return new NoteFile(GetDisplayName(source), source);
+        }
+
+        if (File.Exists(target))
+        {
+            throw new InvalidOperationException("Заметка с таким названием уже существует.");
+        }
+
+        File.Move(source, target);
+        return new NoteFile(GetDisplayName(target), target);
+    }
+
+    public void MoveToTrash(NoteFile note)
+    {
+        var path = ValidateNotePath(note.Path);
+        PurchaseWriteRepository.MoveFileToTrash("note", "Заметка: " + note.Name, path);
+    }
+
     /// <summary>Создаёт новую заметку и возвращает её путь (New-ProjectNoteFile).</summary>
     public string CreateNewNote(string? title = null)
     {
@@ -84,6 +111,24 @@ public sealed class NotesService
     }
 
     public string GetDefaultNotePath() => Path.Combine(AppPaths.NotesDirectory, DefaultNoteFileName);
+
+    private static string ValidateNotePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            throw new InvalidOperationException("Файл заметки не найден.");
+        }
+
+        var root = Path.GetFullPath(AppPaths.NotesDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullPath = Path.GetFullPath(path);
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(Path.GetExtension(fullPath), ".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Можно работать только с заметками из папки приложения.");
+        }
+
+        return fullPath;
+    }
 
     /// <summary>Санитизация имени файла (Get-SafeNoteFileName).</summary>
     private static string GetSafeNoteFileName(string? title)
