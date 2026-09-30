@@ -1,21 +1,2 @@
-# User data and generated files
-_backups/
-data/
-*.sqlite
-*.sqlite-*
-*.log
-
-# Local diagnostics and screenshots
-app/_*.ps1
-app/_*.png
-app/*.bak*
-app/*.corrupted*
-app/*.before_*.bak
-
-# Editor and operating-system files
-.vscode/
-.idea/
-*.tmp
-*.swp
-Thumbs.db
-Desktop.ini
+# Workspace-level ignores (solution .gitignore lives in ProcurementControl/)
+tmp/
