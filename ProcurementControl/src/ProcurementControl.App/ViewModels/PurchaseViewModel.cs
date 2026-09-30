@@ -928,15 +928,32 @@ public partial class PurchaseViewModel : ObservableObject
             {
                 MessageBox.Show(
                     "В задаче " + taskId + " не найдено вложений (файлы задачи, чек-лист, комментарии).\n" +
-                    "Если файл лежит в чате — скачайте его и используйте кнопку «RFQ поставщикам».",
+                    "Исходный RFQ приходит в чат задачи или прикрепляется к чек-листу.",
                     "RFQ из Bitrix");
                 return;
             }
 
-            BitrixService.BitrixTaskFile? selected = files[0];
-            if (files.Count > 1)
+            // RFQ — исходный файл без цен. RRFQ (ответы поставщиков) исключаем,
+            // остальное приоритизируем: RFQ_номер / RFQ номер / просто номер сделки.
+            var candidates = files
+                .Where(file => !IsRrfqName(file.Name))
+                .OrderByDescending(file => ScoreRfqCandidate(file, dealNumber))
+                .ToList();
+
+            if (candidates.Count == 0)
             {
-                var picker = new RfqBitrixFilesWindow(dealNumber, files) { Owner = Application.Current.MainWindow };
+                MessageBox.Show(
+                    "В задаче " + taskId + " нет исходного RFQ: найдены только ответы поставщиков (RRFQ).\n\n" +
+                    "Исходник присылает Евгений С. в чат задачи (RFQ_номер, RFQ номер или просто номер сделки)\n" +
+                    "либо он прикреплён к пункту чек-листа «Заполнение сводного RFQ».",
+                    "RFQ из Bitrix");
+                return;
+            }
+
+            BitrixService.BitrixTaskFile? selected = candidates[0];
+            if (candidates.Count > 1)
+            {
+                var picker = new RfqBitrixFilesWindow(dealNumber, candidates) { Owner = Application.Current.MainWindow };
                 if (picker.ShowDialog() != true || picker.SelectedFile is null)
                 {
                     return;
@@ -1064,6 +1081,37 @@ public partial class PurchaseViewModel : ObservableObject
         {
             MessageBox.Show(ex.Message, "RFQ поставщикам");
         }
+    }
+
+    /// <summary>RRFQ — готовый файл с ценами от поставщика, не исходник для запроса.</summary>
+    private static bool IsRrfqName(string name)
+        => name.Contains("rrfq", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Приоритет файла-исходника: имена «RFQ_номер», «RFQ номер» или просто
+    /// номер сделки; Excel — обязательный признак исходника. См. RfqBitrixFilesWindow.
+    /// </summary>
+    private static int ScoreRfqCandidate(BitrixService.BitrixTaskFile file, string dealNumber)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(file.Name);
+        var isExcel = Path.GetExtension(file.Name) is ".xlsx" or ".xlsm" or ".xls";
+        var score = isExcel ? 1 : -20;
+        if (baseName.StartsWith("rfq", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 4;
+        }
+
+        if (file.Name.Contains(dealNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 4;
+        }
+
+        if (string.Equals(baseName, dealNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 2;
+        }
+
+        return score;
     }
 
     private void ContinueRfqPipeline(

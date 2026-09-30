@@ -220,7 +220,9 @@ public static class BitrixService
     /// Все вложения задачи: файлы задачи (UF_TASK_WEBDAV_FILES и подобные),
     /// чек-лист и комментарии. Нестандартные поля портала собираются рекурсивным
     /// обходом JSON — где именно лежат файлы, зависит от версии портала.
-    /// Методы, на которые нет прав (например, чек-лист), не роняют обход.
+    /// После сбора у каждого вложения запрашивается имя/размер
+    /// (disk.attachedObject.get): вызывающий отсеивает RRFQ-ответы по имени до
+    /// скачивания. Вложения, на которые нет прав, выбрасываются.
     /// </summary>
     public static async Task<List<BitrixTaskFile>> GetTaskFilesAsync(BitrixConfig config, int taskId)
     {
@@ -263,6 +265,31 @@ public static class BitrixService
             ErrorLog.Append("bitrix", "комментарии задачи " + taskId + ": " + ex.Message);
         }
 
+        // Имена нужны до скачивания: исходный RFQ отличается от RRFQ-ответа
+        // именно по имени файла.
+        for (var index = files.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                var attached = await InvokeMethodAsync(config, "disk.attachedObject.get", new Dictionary<string, object>
+                {
+                    ["id"] = files[index].AttachedObjectId,
+                });
+                files[index].Name = ToText(attached, "NAME", ToText(attached, "name"));
+                var size = ToInt(attached, "SIZE", ToInt(attached, "size", 0));
+                if (size > 0)
+                {
+                    files[index].Size = size;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Не диск-вложение (или нет прав) — не предлагаем.
+                ErrorLog.Append("bitrix", "вложение " + files[index].AttachedObjectId + ": " + ex.Message);
+                files.RemoveAt(index);
+            }
+        }
+
         return files;
     }
 
@@ -281,6 +308,23 @@ public static class BitrixService
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
+                // Файловые коллекции часто приходят объектами вида
+                // {"2213": {"ID": ..., "NAME": ...}} — берём ID прямо из объекта.
+                if (contextKey is not null && FileKeyRegex.IsMatch(contextKey))
+                {
+                    foreach (var idKeyName in new[] { "ID", "ATTACHED_OBJECT_ID", "ATTACHEDOBJECTID" })
+                    {
+                        if (element.TryGetProperty(idKeyName, out var idValue)
+                            && (idValue.ValueKind == JsonValueKind.Number || idValue.ValueKind == JsonValueKind.String)
+                            && long.TryParse(idValue.ToString(), out var objectId)
+                            && objectId > 0
+                            && seen.Add(objectId))
+                        {
+                            files.Add(new BitrixTaskFile { AttachedObjectId = objectId, Source = source });
+                        }
+                    }
+                }
+
                 foreach (var property in element.EnumerateObject())
                 {
                     CollectFileIds(property.Value, source, files, seen, property.Name, depth + 1);
