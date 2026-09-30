@@ -1,0 +1,33 @@
+<Window x:Class="ProcurementControl.Views.RfqBitrixFilesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Файлы задачи Bitrix" Width="680" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource CanvasBrush}">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" x:Name="HeaderText"
+                   Foreground="{StaticResource TextBrush}"
+                   FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"/>
+
+        <ListBox Grid.Row="1" x:Name="FilesList" MinHeight="160" MaxHeight="380"
+                 Margin="0,12,0,0"
+                 Background="{StaticResource SurfaceBrush}"
+                 BorderBrush="{StaticResource LineBrush}"
+                 DisplayMemberPath="DisplayText"
+                 SelectionMode="Single"/>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Загрузить" Style="{StaticResource PrimaryButtonStyle}"
+                    Width="110" Height="30" Margin="0,0,8,0" Click="DownloadClick" IsDefault="True"/>
+            <Button Content="Отмена" Style="{StaticResource SecondaryButtonStyle}"
+                    Width="90" Height="30" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

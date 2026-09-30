@@ -38,22 +38,6 @@ public static class OutlookMailImportService
     /// регистре. Отправитель вне таблицы импортирует RRFQ без привязки
     /// (папка = адрес), как раньше.
     /// </summary>
-    private static readonly Dictionary<string, string> SupplierByEmail = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["sales5@chipera.net"] = "CPR",
-        ["huananshengke@163.com"] = "HNN",
-        ["vivi@bomzon.com"] = "BMZ",
-        ["kotakoti@optechic.com"] = "OPT",
-        ["sales12@allpartsic.cn"] = "CRL",
-        ["sales17@allpartsic.cn"] = "CRL",
-        ["xinkeweiltd@126.com"] = "TIM",
-        ["purp-d@moscentech.com"] = "Ben",
-        ["purp-e@moscentech.com"] = "Ben",
-        ["purp-b@moscentech.com"] = "Ben",
-        ["benjamin401@163.com"] = "Ben",
-        ["anna@3-k.com"] = "3K",
-    };
-
     private static readonly string[] ExcelExtensions = { ".xlsx", ".xlsm", ".xls" };
 
     /// <summary>Свои домены: письма коллег и ERP поставщиками не считаются.</summary>
@@ -369,7 +353,8 @@ WHERE substr(original_name, 1, @prefix) = 'mailimport_'
                 {
                     long supplierId = 0;
                     string? supplierName = null;
-                    if (SupplierByEmail.TryGetValue(sender, out var mapped))
+                    var mapped = SupplierDirectory.FindSupplierByEmail(sender);
+                    if (mapped is not null)
                     {
                         // Поставщик создаётся или «освежается» (ON CONFLICT по паре сделка+имя).
                         PurchaseWriteRepository.AddOrTouchSupplier(deal.Id, mapped);

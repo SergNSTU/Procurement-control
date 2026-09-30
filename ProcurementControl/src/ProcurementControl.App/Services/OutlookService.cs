@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace ProcurementControl.Services;
 
 /// <summary>
@@ -23,11 +25,27 @@ public static class OutlookService
 
     /// <summary>Создаёт письмо-черновик и показывает его.</summary>
     public static void CreateMailDraft(string to, string subject, string body)
+        => CreateMailDraft(to, subject, body, attachments: null);
+
+    /// <summary>
+    /// Создаёт письмо-черновик с вложениями и показывает его. Вложения — полные
+    /// пути к существующим файлам. По-прежнему только Display(): письмо уходит,
+    /// только если пользователь нажмёт «Отправить» сам.
+    /// </summary>
+    public static void CreateMailDraft(string to, string subject, string body, IReadOnlyList<string>? attachments)
     {
         var mail = Application.CreateItem(0); // olMailItem
         mail.To = to;
         mail.Subject = subject;
         mail.Body = body;
+        if (attachments is not null)
+        {
+            foreach (var path in attachments.Where(File.Exists))
+            {
+                mail.Attachments.Add(path);
+            }
+        }
+
         mail.Display();
     }
 

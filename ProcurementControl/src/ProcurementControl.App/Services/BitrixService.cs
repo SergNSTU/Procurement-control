@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -85,12 +86,18 @@ public static class BitrixService
 
     /// <summary>
     /// Аналог Invoke-BitrixMethod: POST JSON-вызов метода портала. Возвращает
-    /// узел result; при наличии error бросает исключение с текстом оригинала.
+    /// корень ответа: у списковых методов next/total лежат рядом с result,
+    /// а не внутри него. При наличии error бросает исключение с текстом.
     /// </summary>
-    public static async Task<JsonElement> InvokeMethodAsync(BitrixConfig config, string method, object parameters)
+    public static async Task<JsonElement> InvokeRootAsync(BitrixConfig config, string method, object parameters)
     {
         var uri = BuildMethodUri(config, method);
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+        // UseProxy=false: портал доступен напрямую, а системный прокси
+        // (Hiddify на 127.0.0.1:10809) включён не всегда и ронял все запросы.
+        using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+        {
+            Timeout = TimeSpan.FromSeconds(TimeoutSeconds),
+        };
         using var response = await client.PostAsJsonAsync(uri, parameters);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -108,7 +115,373 @@ public static class BitrixService
             throw new InvalidOperationException($"Bitrix API error {code}: {description}");
         }
 
+        return root.Clone();
+    }
+
+    /// <summary>Вызов метода с разбором узла result (для несписковых методов).</summary>
+    public static async Task<JsonElement> InvokeMethodAsync(BitrixConfig config, string method, object parameters)
+    {
+        var root = await InvokeRootAsync(config, method, parameters);
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
+    }
+
+    /// <summary>
+    /// Ищет задачу по номеру заявки в названии («Номер/Клиент/…») по всему
+    /// порталу (без привязки к проекту — задача может лежать в другой группе).
+    /// Точное совпадение не нашлось — ищется «похожая»: тот же хвост после
+    /// дефиса и совпадающий префикс номера (опечатки вида VNN/VNV). Возвращает
+    /// самую свежую подходящую задачу; Scanned — сколько задач просмотрено.
+    /// </summary>
+    public static async Task<BitrixTaskSearchResult> FindTaskByRequestNumberAsync(BitrixConfig config, string requestNumber)
+    {
+        var needle = requestNumber.Trim();
+        if (needle.Length == 0)
+        {
+            return new BitrixTaskSearchResult();
+        }
+
+        var scanned = 0;
+        List<BitrixTaskInfo> filtered;
+        try
+        {
+            var filteredRoot = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
+            {
+                ["filter"] = new Dictionary<string, object>
+                {
+                    ["TITLE"] = "%" + needle + "%",
+                },
+                ["select"] = new[] { "id", "title", "createdDate" },
+                ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
+            });
+            filtered = ReadTaskList(filteredRoot);
+            scanned = filtered.Count;
+        }
+        catch (Exception ex)
+        {
+            // Портал мог не принять %-фильтр — идём полным обходом.
+            ErrorLog.Append("bitrix", "поиск по TITLE задачи-заявки: " + ex.Message);
+            filtered = new List<BitrixTaskInfo>();
+        }
+
+        var exact = PickTaskByRequestNumber(filtered, needle);
+        if (exact is not null)
+        {
+            return new BitrixTaskSearchResult { Task = exact };
+        }
+
+        // Похожая задача: тот же хвост номера (после дефиса) — ловит опечатки
+        // в буквах префикса (VNN/VNV), но не подставляет чужой номер молча.
+        var tail = needle.Contains('-') ? needle[(needle.LastIndexOf('-') + 1)..] : string.Empty;
+        List<BitrixTaskInfo> similar = new();
+        if (tail.Length >= 4)
+        {
+            try
+            {
+                var similarRoot = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
+                {
+                    ["filter"] = new Dictionary<string, object>
+                    {
+                        ["TITLE"] = "%" + tail + "%",
+                    },
+                    ["select"] = new[] { "id", "title", "createdDate" },
+                    ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
+                });
+                var tailTasks = ReadTaskList(similarRoot);
+                scanned = Math.Max(scanned, tailTasks.Count);
+                similar = tailTasks
+                    .Select(task => (task, parts: ParseTaskTitle(task.Title)))
+                    .Where(item => item.parts is not null
+                        && SameRequestTail(item.parts.RequestNumber, needle)
+                        && CommonPrefixLength(item.parts.RequestNumber, needle) >= 10)
+                    .Select(item => item.task)
+                    .OrderByDescending(task => task.TaskId)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("bitrix", "поиск по хвосту номера задачи-заявки: " + ex.Message);
+            }
+        }
+
+        var similarMatch = similar.FirstOrDefault();
+        if (similarMatch is not null)
+        {
+            return new BitrixTaskSearchResult { Task = similarMatch, IsSimilarMatch = true, Scanned = scanned };
+        }
+
+        // Последний шанс: полный обход доступных задач (LIKE мог не сработать).
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var parameters = new Dictionary<string, object>
+            {
+                ["select"] = new[] { "id", "title", "createdDate" },
+                ["order"] = new Dictionary<string, object> { ["ID"] = "ASC" },
+            };
+            if (page > 0)
+            {
+                parameters["start"] = page * 50;
+            }
+
+            var root = await InvokeRootAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(root);
+            scanned += batch.Count;
+            var found = PickTaskByRequestNumber(batch, needle);
+            if (found is not null)
+            {
+                return new BitrixTaskSearchResult { Task = found };
+            }
+
+            if (batch.Count == 0
+                || !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("next", out var next)
+                    && next.ValueKind == JsonValueKind.Number && next.TryGetInt32(out var nextStart) && nextStart > 0))
+            {
+                break;
+            }
+        }
+
+        ErrorLog.Append("bitrix", "задача-заявка «" + needle + "» не найдена: доступно вебхуку " + scanned +
+            " задач. Проверьте, что вебхук-пользователь видит задачу и номер в названии совпадает.");
+        return new BitrixTaskSearchResult { Scanned = scanned };
+    }
+
+    /// <summary>Общий хвост номера после дефиса (без учёта регистра).</summary>
+    private static bool SameRequestTail(string candidate, string request)
+    {
+        var candidateTail = candidate.Contains('-') ? candidate[(candidate.LastIndexOf('-') + 1)..] : string.Empty;
+        var requestTail = request.Contains('-') ? request[(request.LastIndexOf('-') + 1)..] : string.Empty;
+        return candidateTail.Length > 0
+            && string.Equals(candidateTail, requestTail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CommonPrefixLength(string first, string second)
+    {
+        var length = Math.Min(first.Length, second.Length);
+        var common = 0;
+        while (common < length && char.ToUpperInvariant(first[common]) == char.ToUpperInvariant(second[common]))
+        {
+            common++;
+        }
+
+        return common;
+    }
+
+    private static BitrixTaskInfo? PickTaskByRequestNumber(List<BitrixTaskInfo> tasks, string requestNumber)
+        => tasks.Where(task => string.Equals(
+                    ParseTaskTitle(task.Title)?.RequestNumber,
+                    requestNumber,
+                    StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(task => task.TaskId)
+            .FirstOrDefault();
+
+    /// <summary>Вложение задачи Bitrix (диск-объект, привязанный к задаче, чек-листу или комментарию).</summary>
+    public sealed class BitrixTaskFile
+    {
+        public long AttachedObjectId { get; init; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public long? Size { get; set; }
+
+        /// <summary>Где найдено: «задача», «чек-лист» или «комментарий».</summary>
+        public string Source { get; init; } = string.Empty;
+    }
+
+    /// <summary>Ключи, внутри которых ищутся id вложений диска.</summary>
+    private static readonly Regex FileKeyRegex = new("file|attach|webdav", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Все вложения задачи: файлы задачи (UF_TASK_WEBDAV_FILES и подобные),
+    /// чек-лист и комментарии. Нестандартные поля портала собираются рекурсивным
+    /// обходом JSON — где именно лежат файлы, зависит от версии портала.
+    /// После сбора у каждого вложения запрашивается имя/размер
+    /// (disk.attachedObject.get): вызывающий отсеивает RRFQ-ответы по имени до
+    /// скачивания. Вложения, на которые нет прав, выбрасываются.
+    /// </summary>
+    public static async Task<List<BitrixTaskFile>> GetTaskFilesAsync(BitrixConfig config, int taskId)
+    {
+        var files = new List<BitrixTaskFile>();
+        var seen = new HashSet<long>();
+
+        var taskResult = await InvokeMethodAsync(config, "tasks.task.get", new Dictionary<string, object>
+        {
+            ["taskId"] = taskId,
+            ["select"] = new[] { "*", "UF_*" },
+        });
+        var element = taskResult.ValueKind == JsonValueKind.Object && taskResult.TryGetProperty("task", out var task)
+            ? task
+            : taskResult;
+        CollectFileIds(element, "задача", files, seen);
+
+        try
+        {
+            var checklist = await InvokeMethodAsync(config, "tasks.task.checklist.get", new Dictionary<string, object>
+            {
+                ["taskId"] = taskId,
+            });
+            CollectFileIds(checklist, "чек-лист", files, seen);
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Append("bitrix", "чек-лист задачи " + taskId + ": " + ex.Message);
+        }
+
+        try
+        {
+            var comments = await InvokeMethodAsync(config, "task.commentitem.getlist", new Dictionary<string, object>
+            {
+                ["TASKID"] = taskId,
+            });
+            CollectFileIds(comments, "комментарий", files, seen);
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Append("bitrix", "комментарии задачи " + taskId + ": " + ex.Message);
+        }
+
+        // Имена нужны до скачивания: исходный RFQ отличается от RRFQ-ответа
+        // именно по имени файла.
+        for (var index = files.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                var attached = await InvokeMethodAsync(config, "disk.attachedObject.get", new Dictionary<string, object>
+                {
+                    ["id"] = files[index].AttachedObjectId,
+                });
+                files[index].Name = ToText(attached, "NAME", ToText(attached, "name"));
+                var size = ToInt(attached, "SIZE", ToInt(attached, "size", 0));
+                if (size > 0)
+                {
+                    files[index].Size = size;
+                }
+            }
+            catch (Exception ex)
+            {
+                // Не диск-вложение (или нет прав) — не предлагаем.
+                ErrorLog.Append("bitrix", "вложение " + files[index].AttachedObjectId + ": " + ex.Message);
+                files.RemoveAt(index);
+            }
+        }
+
+        return files;
+    }
+
+    /// <summary>
+    /// Рекурсивно собирает id вложений диска: числа и числовые строки внутри
+    /// полей, чьё имя содержит file/attach/webdav (FILES, UF_TASK_WEBDAV_FILES,
+    /// attachedObjectId и т.п.).
+    /// </summary>
+    private static void CollectFileIds(JsonElement element, string source, List<BitrixTaskFile> files, HashSet<long> seen, string? contextKey = null, int depth = 0)
+    {
+        if (depth > 8 || files.Count >= 50)
+        {
+            return;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                // Файловые коллекции часто приходят объектами вида
+                // {"2213": {"ID": ..., "NAME": ...}} — берём ID прямо из объекта.
+                if (contextKey is not null && FileKeyRegex.IsMatch(contextKey))
+                {
+                    foreach (var idKeyName in new[] { "ID", "ATTACHED_OBJECT_ID", "ATTACHEDOBJECTID" })
+                    {
+                        if (element.TryGetProperty(idKeyName, out var idValue)
+                            && (idValue.ValueKind == JsonValueKind.Number || idValue.ValueKind == JsonValueKind.String)
+                            && long.TryParse(idValue.ToString(), out var objectId)
+                            && objectId > 0
+                            && seen.Add(objectId))
+                        {
+                            files.Add(new BitrixTaskFile { AttachedObjectId = objectId, Source = source });
+                        }
+                    }
+                }
+
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectFileIds(property.Value, source, files, seen, property.Name, depth + 1);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectFileIds(item, source, files, seen, contextKey, depth + 1);
+                }
+
+                break;
+            case JsonValueKind.Number or JsonValueKind.String:
+                if (contextKey is null || !FileKeyRegex.IsMatch(contextKey))
+                {
+                    break;
+                }
+
+                if (long.TryParse(element.ToString(), out var id) && id > 0 && seen.Add(id))
+                {
+                    files.Add(new BitrixTaskFile { AttachedObjectId = id, Source = source });
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Скачивает вложение в destinationPath (через disk.attachedObject.get →
+    /// DOWNLOAD_URL; без URL — второй запрос disk.file.get по FILE_ID).
+    /// Заполняет имя и размер файла из портала.
+    /// </summary>
+    public static async Task DownloadTaskFileAsync(BitrixConfig config, BitrixTaskFile file, string destinationPath)
+    {
+        var attached = await InvokeMethodAsync(config, "disk.attachedObject.get", new Dictionary<string, object>
+        {
+            ["id"] = file.AttachedObjectId,
+        });
+
+        if (file.Name.Length == 0)
+        {
+            file.Name = ToText(attached, "NAME", ToText(attached, "name"));
+        }
+
+        if (file.Size is null)
+        {
+            var size = ToInt(attached, "SIZE", ToInt(attached, "size", 0));
+            if (size > 0)
+            {
+                file.Size = size;
+            }
+        }
+
+        var url = ToText(attached, "DOWNLOAD_URL", ToText(attached, "downloadUrl"));
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            var fileId = ToInt(attached, "FILE_ID", ToInt(attached, "fileId", 0));
+            if (fileId <= 0)
+            {
+                throw new InvalidOperationException("Bitrix не вернул ссылку на скачивание для вложения " + file.AttachedObjectId + ".");
+            }
+
+            var diskFile = await InvokeMethodAsync(config, "disk.file.get", new Dictionary<string, object>
+            {
+                ["id"] = fileId,
+            });
+            url = ToText(diskFile, "DOWNLOAD_URL", ToText(diskFile, "downloadUrl"));
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException("Bitrix не вернул ссылку на скачивание для вложения " + file.AttachedObjectId + ".");
+        }
+
+        // UseProxy=false: портал доступен напрямую, а системный прокси
+        // (Hiddify на 127.0.0.1:10809) включён не всегда и ронял все запросы.
+        using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+        {
+            Timeout = TimeSpan.FromMinutes(2),
+        };
+        using var response = await client.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        await File.WriteAllBytesAsync(destinationPath, await response.Content.ReadAsByteArrayAsync());
     }
 
     /// <summary>
@@ -200,13 +573,14 @@ public static class BitrixService
                 parameters["start"] = start;
             }
 
-            var result = await InvokeMethodAsync(config, "tasks.task.list", parameters);
-            var batch = ReadTaskList(result);
+            var root = await InvokeRootAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(root);
             tasks.AddRange(batch);
 
-            if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("next", out var next))
+            // next/total лежат в корне ответа, а не внутри result.
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("next", out var next))
             {
-                var nextStart = ToInt(result, "next", -1);
+                var nextStart = ToInt(root, "next", -1);
                 if (nextStart > 0)
                 {
                     start = nextStart;
@@ -232,14 +606,14 @@ public static class BitrixService
     /// </summary>
     public static async Task<string?> GetLatestCreatedDateRawAsync(BitrixConfig config)
     {
-        var result = await InvokeMethodAsync(config, "tasks.task.list", new Dictionary<string, object>
+        var root = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
         {
             ["filter"] = new Dictionary<string, object> { ["GROUP_ID"] = config.ProjectId },
             ["select"] = new[] { "id", "createdDate" },
             ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
         });
 
-        var tasks = ReadTaskList(result);
+        var tasks = ReadTaskList(root);
         return tasks.Count == 0 ? null : tasks[0].CreatedDate;
     }
 
@@ -285,12 +659,30 @@ public static class BitrixService
         return tasks;
     }
 
-    /// <summary>Разбор узла tasks.task.list в список задач.</summary>
-    private static List<BitrixTaskInfo> ReadTaskList(JsonElement result)
+    /// <summary>
+    /// Разбор ответа tasks.task.list. Принимает корень ответа: задачи лежат в
+    /// result.tasks, при этом сам result бывает и массивом (зависит от портала).
+    /// </summary>
+    private static List<BitrixTaskInfo> ReadTaskList(JsonElement root)
     {
         var tasks = new List<BitrixTaskInfo>();
-        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("tasks", out var tasksElement)
-            || tasksElement.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("result", out var resultNode))
+        {
+            return tasks;
+        }
+
+        JsonElement tasksElement;
+        if (resultNode.ValueKind == JsonValueKind.Array)
+        {
+            tasksElement = resultNode;
+        }
+        else if (resultNode.ValueKind == JsonValueKind.Object
+            && resultNode.TryGetProperty("tasks", out var inner)
+            && inner.ValueKind == JsonValueKind.Array)
+        {
+            tasksElement = inner;
+        }
+        else
         {
             return tasks;
         }

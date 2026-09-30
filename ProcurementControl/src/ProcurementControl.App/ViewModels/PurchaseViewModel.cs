@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -50,6 +51,10 @@ public partial class PurchaseViewModel : ObservableObject
     private PurchaseSnapshot? _snapshot;
     private PurchaseRepository? _repository;
     private List<PurchaseDealRow> _allDeals = new();
+    private readonly DispatcherTimer _searchTimer;
+    private PurchaseDealRow? _editorDeal;
+    private bool _isLoadingEditor;
+    private bool _isRestoringSelection;
 
     [ObservableProperty]
     private string _searchText = string.Empty;
@@ -91,6 +96,9 @@ public partial class PurchaseViewModel : ObservableObject
     [ObservableProperty] private string _editAssemblyLocation = string.Empty;
 
     [ObservableProperty]
+    private bool _hasUnsavedChanges;
+
+    [ObservableProperty]
     private string _archiveButtonText = "В архив";
 
     // Панель документов выбранной сделки (аналог $docsPanel/$docsGrid).
@@ -128,20 +136,58 @@ public partial class PurchaseViewModel : ObservableObject
     public PurchaseViewModel()
     {
         _selectedFilter = Filters[0];
+        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _searchTimer.Tick += (_, _) =>
+        {
+            _searchTimer.Stop();
+            ApplyView();
+        };
         Load();
     }
 
-    partial void OnSearchTextChanged(string value) => ApplyView();
+    partial void OnSearchTextChanged(string value)
+    {
+        _searchTimer.Stop();
+        _searchTimer.Start();
+    }
 
     partial void OnSelectedFilterChanged(FilterOption value) => ApplyView();
 
     partial void OnSelectedDealChanged(PurchaseDealRow? value)
     {
+        if (!_isRestoringSelection && HasUnsavedChanges && _editorDeal?.Id != value?.Id)
+        {
+            var answer = MessageBox.Show(
+                "В карточке сделки есть несохранённые изменения. Отменить их и перейти к другой сделке?",
+                "Несохранённые изменения",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.Yes)
+            {
+                _isRestoringSelection = true;
+                SelectedDeal = _editorDeal;
+                _isRestoringSelection = false;
+                return;
+            }
+        }
+
         FillEditPanel(value);
         SelectedSupplier = null;
         LoadSuppliers();
         LoadDocuments();
     }
+
+    partial void OnEditClientChanged(string value) => MarkEditorDirty();
+    partial void OnEditDealNumberChanged(string value) => MarkEditorDirty();
+    partial void OnEditBoardCountChanged(string value) => MarkEditorDirty();
+    partial void OnEditStatusChanged(string value) => MarkEditorDirty();
+    partial void OnEditPeriodChanged(string value) => MarkEditorDirty();
+    partial void OnEditCommentChanged(string value) => MarkEditorDirty();
+    partial void OnEditPriorityChanged(string value) => MarkEditorDirty();
+    partial void OnEditTrackingStatusChanged(string value) => MarkEditorDirty();
+    partial void OnEditExecutorChanged(string value) => MarkEditorDirty();
+    partial void OnEditReminderDateChanged(string value) => MarkEditorDirty();
+    partial void OnEditAssemblyLocationChanged(string value) => MarkEditorDirty();
 
     [RelayCommand]
     private void Reload() => Load();
@@ -277,6 +323,7 @@ public partial class PurchaseViewModel : ObservableObject
             });
             ApplyEditorValues(deal);
             RefreshEditedDealInPlace(deal);
+            HasUnsavedChanges = false;
             StatusText = "Сделка сохранена";
             ToastService.Show(StatusText, ToastKind.Success);
         }
@@ -819,9 +866,399 @@ public partial class PurchaseViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Конвейер RFQ по сделке (ветка rfq-pipeline): исходник заявки → подготовка
+    /// поставщицкого файла (зелёные строки) → рассылка черновиков поставщикам.
+    /// Чтение исходника — в фоновом STA-потоке (Excel COM), собранные файлы
+    /// регистрируются в документах сделки.
+    /// </summary>
+    [RelayCommand]
+    private void PrepareRfq()
+    {
+        try
+        {
+            var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
+
+            // Поставщиков на этапе подготовки не требуем — они нужны только
+            // для рассылки, и их можно завести, пока RFQ уже собран.
+            if (TrySendExistingRfq(deal))
+            {
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Title = "Исходный RFQ (заявка клиента)",
+                Filter = "Excel files (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|All files (*.*)|*.*",
+            };
+            if (dialog.ShowDialog(Application.Current.MainWindow) != true)
+            {
+                return;
+            }
+
+            StartRfqPrepare(dialog.FileName, deal.Id, deal.DealNumber, deal.Client);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
+    /// <summary>
+    /// Шаг 1 конвейера: исходник берётся из задачи Bitrix, связанной со сделкой
+    /// (файлы задачи, чек-листа и комментариев; REST + вебхук из настроек Bitrix).
+    /// Скачанный файл идёт в ту же подготовку, что и ручной выбор.
+    /// </summary>
+    [RelayCommand]
+    private async Task LoadRfqFromBitrixAsync()
+    {
+        try
+        {
+            var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
+
+            if (TrySendExistingRfq(deal))
+            {
+                return;
+            }
+
+            var config = BitrixRepository.GetConfig();
+            if (!config.IsConfigured)
+            {
+                throw new InvalidOperationException("Bitrix не настроен: нет вебхука (bitrix_webhook_token).");
+            }
+
+            var taskId = BitrixRepository.GetTaskIdForDeal(deal.Id);
+            if (taskId <= 0)
+            {
+                // Сделка создана вручную, но задача в Bitrix может существовать:
+                // ищем по номеру заявки в названии, опечатки номера — через
+                // «похожие» (тот же хвост после дефиса) с подтверждением.
+                ProgressService.Begin("Bitrix: поиск задачи по номеру " + deal.DealNumber + "…");
+                BitrixTaskSearchResult search;
+                try
+                {
+                    search = await BitrixService.FindTaskByRequestNumberAsync(config, deal.DealNumber);
+                }
+                finally
+                {
+                    ProgressService.End();
+                }
+
+                if (search.Task is null)
+                {
+                    throw new InvalidOperationException(
+                        "В доступных вебхуку задачах Bitrix (" + search.Scanned + " шт.) нет задачи с номером " + deal.DealNumber +
+                        " и похожих номеров. Проверьте номер сделки или загрузите RFQ файлом («RFQ поставщикам»).");
+                }
+
+                if (search.IsSimilarMatch)
+                {
+                    var answer = MessageBox.Show(
+                        "Задачи с точным номером " + deal.DealNumber + " нет, но найдена похожая:\r\n\r\n" +
+                        search.Task.Title + "\r\n\r\nСвязать сделку с ней и загрузить RFQ?",
+                        "RFQ из Bitrix", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (answer != MessageBoxResult.Yes)
+                    {
+                        return;
+                    }
+                }
+
+                BitrixRepository.LinkTask(deal.Id, search.Task.TaskId, "rfq_pipeline");
+                taskId = search.Task.TaskId;
+                StatusText = "Сделка связана с задачей Bitrix " + taskId;
+                ToastService.Show("Задача " + taskId + ": " + search.Task.Title, ToastKind.Info);
+            }
+
+            var dealId = deal.Id;
+            var dealNumber = deal.DealNumber;
+            var client = deal.Client;
+
+            ProgressService.Begin("Bitrix: поиск файлов задачи " + taskId + "…");
+            List<BitrixService.BitrixTaskFile> files;
+            try
+            {
+                files = await BitrixService.GetTaskFilesAsync(config, taskId);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            if (files.Count == 0)
+            {
+                MessageBox.Show(
+                    "В задаче " + taskId + " не найдено вложений (файлы задачи, чек-лист, комментарии).\n" +
+                    "Исходный RFQ приходит в чат задачи или прикрепляется к чек-листу.",
+                    "RFQ из Bitrix");
+                return;
+            }
+
+            // RFQ — исходный файл без цен. RRFQ (ответы поставщиков) исключаем,
+            // остальное приоритизируем: RFQ_номер / RFQ номер / просто номер сделки.
+            var candidates = files
+                .Where(file => !IsRrfqName(file.Name))
+                .OrderByDescending(file => ScoreRfqCandidate(file, dealNumber))
+                .ToList();
+
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show(
+                    "В задаче " + taskId + " нет исходного RFQ: найдены только ответы поставщиков (RRFQ).\n\n" +
+                    "Исходник присылает Евгений С. в чат задачи (RFQ_номер, RFQ номер или просто номер сделки)\n" +
+                    "либо он прикреплён к пункту чек-листа «Заполнение сводного RFQ».",
+                    "RFQ из Bitrix");
+                return;
+            }
+
+            BitrixService.BitrixTaskFile? selected = candidates[0];
+            if (candidates.Count > 1)
+            {
+                var picker = new RfqBitrixFilesWindow(dealNumber, candidates) { Owner = Application.Current.MainWindow };
+                if (picker.ShowDialog() != true || picker.SelectedFile is null)
+                {
+                    return;
+                }
+
+                selected = picker.SelectedFile;
+            }
+
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "rfq-bitrix-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var localPath = Path.Combine(tempDirectory,
+                string.IsNullOrWhiteSpace(selected.Name) ? "task_" + taskId + "_file.xlsx" : selected.Name);
+
+            ProgressService.Begin("Bitrix: скачивание " + (selected.Name.Length > 0 ? selected.Name : "вложения") + "…");
+            try
+            {
+                await BitrixService.DownloadTaskFileAsync(config, selected, localPath);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            StartRfqPrepare(localPath, dealId, dealNumber, client);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ из Bitrix");
+        }
+    }
+
+    /// <summary>Общая часть конвейера: чтение исходника и открытие окна подготовки.</summary>
+    private void StartRfqPrepare(string sourcePath, long dealId, string dealNumber, string client)
+    {
+        var suppliers = Suppliers.ToList();
+
+        var dispatcher = Application.Current?.Dispatcher;
+        ProgressService.Begin("RFQ: чтение исходника…");
+        var worker = new Thread(() =>
+        {
+            Exception? error = null;
+            RfqSourceReadResult? source = null;
+            try
+            {
+                source = RfqPrepareService.ReadSource(sourcePath);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+
+            if (dispatcher is null || dispatcher.CheckAccess())
+            {
+                ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers);
+            }
+            else
+            {
+                dispatcher.Invoke(() => ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers));
+            }
+        });
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.IsBackground = true;
+        worker.Start();
+    }
+
+    /// <summary>
+    /// Если к сделке уже прикреплён RFQ — предлагает разослать готовый файл без
+    /// пересборки. Возвращает true, когда пользователь выбрал рассылку (или
+    /// закрыл предложение рассылкой), false — нужно собирать новый.
+    /// </summary>
+    private bool TrySendExistingRfq(PurchaseDealRow deal)
+    {
+        var rfqDocument = Documents.FirstOrDefault(document =>
+            string.Equals(document.DocumentType, "RFQ", StringComparison.OrdinalIgnoreCase));
+        if (rfqDocument is null)
+        {
+            return false;
+        }
+
+        var answer = MessageBox.Show(
+            "У сделки уже есть RFQ: " + rfqDocument.OriginalName + ".\r\n\r\n" +
+            "Да — разослать готовый файл поставщикам\r\n" +
+            "Нет — собрать новый RFQ из исходника",
+            "RFQ поставщикам", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        OpenRfqSend(deal, rfqDocument);
+        return true;
+    }
+
+    private void OpenRfqSend(PurchaseDealRow deal, PurchaseDocumentRow rfqDocument)
+    {
+        try
+        {
+            if (Suppliers.Count == 0)
+            {
+                MessageBox.Show(
+                    "У сделки нет поставщиков. Добавьте их в карточке сделки (кнопка «Добавить поставщика»)\r\n" +
+                    "и снова нажмите «RFQ поставщикам» — приложение предложит разослать готовый файл.",
+                    "RFQ поставщикам");
+                return;
+            }
+
+            var file = PurchaseWriteSession.Execute(connection => PurchaseDocumentsStore.ResolveDocumentFile(
+                connection, rfqDocument.Id, rfqDocument.StoredPath, rfqDocument.OriginalName, rfqDocument.FileHash));
+            if (!file.Found)
+            {
+                throw new InvalidOperationException("Файл RFQ не найден на диске: " + file.Path);
+            }
+
+            var sendWindow = new RfqSendWindow(deal.DealNumber, deal.Client, Suppliers.ToList(), new[] { file.Path })
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (sendWindow.ShowDialog() == true)
+            {
+                StatusText = "Черновиков создано: " + sendWindow.CreatedDrafts;
+                ToastService.Show("Черновиков создано: " + sendWindow.CreatedDrafts, ToastKind.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
+    /// <summary>RRFQ — готовый файл с ценами от поставщика, не исходник для запроса.</summary>
+    private static bool IsRrfqName(string name)
+        => name.Contains("rrfq", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Приоритет файла-исходника: имена «RFQ_номер», «RFQ номер» или просто
+    /// номер сделки; Excel — обязательный признак исходника. См. RfqBitrixFilesWindow.
+    /// </summary>
+    private static int ScoreRfqCandidate(BitrixService.BitrixTaskFile file, string dealNumber)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(file.Name);
+        var isExcel = Path.GetExtension(file.Name) is ".xlsx" or ".xlsm" or ".xls";
+        var score = isExcel ? 1 : -20;
+        if (baseName.StartsWith("rfq", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 4;
+        }
+
+        if (file.Name.Contains(dealNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 4;
+        }
+
+        if (string.Equals(baseName, dealNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 2;
+        }
+
+        return score;
+    }
+
+    private void ContinueRfqPipeline(
+        Exception? error,
+        RfqSourceReadResult? source,
+        long dealId,
+        string dealNumber,
+        string client,
+        List<SupplierRow> suppliers)
+    {
+        ProgressService.End();
+        try
+        {
+            if (error is not null)
+            {
+                throw error;
+            }
+
+            if (source is null || source.Rows.Count == 0)
+            {
+                throw new InvalidOperationException("В исходнике не найдено ни одной позиции.");
+            }
+
+            var prepareWindow = new RfqPrepareWindow(dealNumber, client, source, Path.GetTempPath())
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (prepareWindow.ShowDialog() != true)
+            {
+                return;
+            }
+
+            // Собранные файлы регистрируются в документах сделки; письма
+            // прикрепляют копию из хранилища, временные файлы больше не нужны.
+            var storedRfq = PurchaseDocumentsStore.AddDocument(
+                dealId, 0, "RFQ", prepareWindow.SupplierFilePath, folderName: "RFQ");
+            try
+            {
+                PurchaseDocumentsStore.AddDocument(
+                    dealId, 0, "Other", prepareWindow.CompelFilePath,
+                    folderName: "RFQ",
+                    displayName: Path.GetFileName(prepareWindow.CompelFilePath));
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("documents", ex);
+            }
+
+            LoadDocuments();
+
+            if (Suppliers.Count == 0)
+            {
+                // Поставщиков можно завести позже: повторное нажатие «RFQ
+                // поставщикам» предложит разослать готовый файл без пересборки.
+                StatusText = "RFQ готов и прикреплён к сделке; для рассылки добавьте поставщиков";
+                MessageBox.Show(
+                    "RFQ собран и прикреплён к сделке (вместе со списком «Для Компэла»).\r\n\r\n" +
+                    "Чтобы разослать: добавьте поставщиков сделки и снова нажмите\r\n" +
+                    "«RFQ поставщикам» — приложение предложит отправить готовый файл.",
+                    "RFQ поставщикам");
+                return;
+            }
+
+            var sendWindow = new RfqSendWindow(dealNumber, client, suppliers, new[] { storedRfq })
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (sendWindow.ShowDialog() == true)
+            {
+                StatusText = "RFQ подготовлен, черновиков: " + sendWindow.CreatedDrafts;
+                ToastService.Show("Черновиков создано: " + sendWindow.CreatedDrafts, ToastKind.Success);
+            }
+            else
+            {
+                StatusText = "RFQ подготовлен и прикреплён к сделке";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
     /// <summary>Заполнить панель редактирования полями выбранной сделки.</summary>
     private void FillEditPanel(PurchaseDealRow? deal)
     {
+        _isLoadingEditor = true;
         EditClient = deal?.Client ?? string.Empty;
         EditDealNumber = deal?.DealNumber ?? string.Empty;
         EditBoardCount = deal?.BoardCount ?? string.Empty;
@@ -834,6 +1271,20 @@ public partial class PurchaseViewModel : ObservableObject
         EditReminderDate = deal?.ReminderDate ?? string.Empty;
         EditAssemblyLocation = deal?.AssemblyLocation ?? string.Empty;
         ArchiveButtonText = deal?.Archived == 1 ? "Вернуть" : "В архив";
+        _editorDeal = deal;
+        HasUnsavedChanges = false;
+        _isLoadingEditor = false;
+    }
+
+    private void MarkEditorDirty()
+    {
+        if (_isLoadingEditor || SelectedDeal is null)
+        {
+            return;
+        }
+
+        HasUnsavedChanges = true;
+        StatusText = "Есть несохранённые изменения";
     }
 
     private QuoteImportSaveResult ImportQuotes(IReadOnlyList<(string Path, string Supplier)> sources, string comment, PurchaseDealRow deal)

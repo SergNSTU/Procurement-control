@@ -21,6 +21,20 @@ public sealed class BitrixTaskInfo
 }
 
 /// <summary>
+/// Результат поиска задачи по номеру сделки: точный или похожий (в номерах
+/// бывают опечатки — например VNN/VNV); Scanned — сколько задач просмотрено.
+/// </summary>
+public sealed class BitrixTaskSearchResult
+{
+    public BitrixTaskInfo? Task { get; init; }
+
+    /// <summary>Номер задачи отличается от номера сделки — требует подтверждения.</summary>
+    public bool IsSimilarMatch { get; init; }
+
+    public int Scanned { get; init; }
+}
+
+/// <summary>
 /// Разобранное название задачи формата «Номер/Клиент/Описание - N шт.» —
 /// порт Convert-BitrixTaskTitleToProcurement (BitrixIntegration.ps1,
 /// строки 232-287) в облегчённом варианте: клиент и количество не обязательны.
