@@ -884,29 +884,42 @@ public partial class PurchaseViewModel : ObservableObject
             if (taskId <= 0)
             {
                 // Сделка создана вручную, но задача в Bitrix может существовать:
-                // ищем по номеру заявки в названии и связываем навсегда.
+                // ищем по номеру заявки в названии, опечатки номера — через
+                // «похожие» (тот же хвост после дефиса) с подтверждением.
                 ProgressService.Begin("Bitrix: поиск задачи по номеру " + deal.DealNumber + "…");
-                BitrixTaskInfo? found;
+                BitrixTaskSearchResult search;
                 try
                 {
-                    found = await BitrixService.FindTaskByRequestNumberAsync(config, deal.DealNumber);
+                    search = await BitrixService.FindTaskByRequestNumberAsync(config, deal.DealNumber);
                 }
                 finally
                 {
                     ProgressService.End();
                 }
 
-                if (found is null)
+                if (search.Task is null)
                 {
                     throw new InvalidOperationException(
-                        "В проекте Bitrix «Заявка на расчет КС в РФ» нет задачи с номером " + deal.DealNumber +
-                        " в названии. Если задача в другом проекте или номер в названии другой — загрузите RFQ файлом («RFQ поставщикам»).");
+                        "В доступных вебхуку задачах Bitrix (" + search.Scanned + " шт.) нет задачи с номером " + deal.DealNumber +
+                        " и похожих номеров. Проверьте номер сделки или загрузите RFQ файлом («RFQ поставщикам»).");
                 }
 
-                BitrixRepository.LinkTask(deal.Id, found.TaskId);
-                taskId = found.TaskId;
+                if (search.IsSimilarMatch)
+                {
+                    var answer = MessageBox.Show(
+                        "Задачи с точным номером " + deal.DealNumber + " нет, но найдена похожая:\r\n\r\n" +
+                        search.Task.Title + "\r\n\r\nСвязать сделку с ней и загрузить RFQ?",
+                        "RFQ из Bitrix", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (answer != MessageBoxResult.Yes)
+                    {
+                        return;
+                    }
+                }
+
+                BitrixRepository.LinkTask(deal.Id, search.Task.TaskId);
+                taskId = search.Task.TaskId;
                 StatusText = "Сделка связана с задачей Bitrix " + taskId;
-                ToastService.Show("Найдена задача " + taskId + " — связь сохранена", ToastKind.Info);
+                ToastService.Show("Задача " + taskId + ": " + search.Task.Title, ToastKind.Info);
             }
 
             var dealId = deal.Id;

@@ -86,9 +86,10 @@ public static class BitrixService
 
     /// <summary>
     /// Аналог Invoke-BitrixMethod: POST JSON-вызов метода портала. Возвращает
-    /// узел result; при наличии error бросает исключение с текстом оригинала.
+    /// корень ответа: у списковых методов next/total лежат рядом с result,
+    /// а не внутри него. При наличии error бросает исключение с текстом.
     /// </summary>
-    public static async Task<JsonElement> InvokeMethodAsync(BitrixConfig config, string method, object parameters)
+    public static async Task<JsonElement> InvokeRootAsync(BitrixConfig config, string method, object parameters)
     {
         var uri = BuildMethodUri(config, method);
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
@@ -109,29 +110,36 @@ public static class BitrixService
             throw new InvalidOperationException($"Bitrix API error {code}: {description}");
         }
 
+        return root.Clone();
+    }
+
+    /// <summary>Вызов метода с разбором узла result (для несписковых методов).</summary>
+    public static async Task<JsonElement> InvokeMethodAsync(BitrixConfig config, string method, object parameters)
+    {
+        var root = await InvokeRootAsync(config, method, parameters);
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
     }
 
     /// <summary>
     /// Ищет задачу по номеру заявки в названии («Номер/Клиент/…») по всему
     /// порталу (без привязки к проекту — задача может лежать в другой группе).
-    /// Сначала фильтр по TITLE с %-подстановкой; если портал его не поддержал —
-    /// постраничный обход всех доступных вебхуку задач. Возвращается самая
-    /// свежая из подходящих задач; null — ничего не нашлось (причина — в лог).
+    /// Точное совпадение не нашлось — ищется «похожая»: тот же хвост после
+    /// дефиса и совпадающий префикс номера (опечатки вида VNN/VNV). Возвращает
+    /// самую свежую подходящую задачу; Scanned — сколько задач просмотрено.
     /// </summary>
-    public static async Task<BitrixTaskInfo?> FindTaskByRequestNumberAsync(BitrixConfig config, string requestNumber)
+    public static async Task<BitrixTaskSearchResult> FindTaskByRequestNumberAsync(BitrixConfig config, string requestNumber)
     {
         var needle = requestNumber.Trim();
         if (needle.Length == 0)
         {
-            return null;
+            return new BitrixTaskSearchResult();
         }
 
         var scanned = 0;
         List<BitrixTaskInfo> filtered;
         try
         {
-            var filteredResult = await InvokeMethodAsync(config, "tasks.task.list", new Dictionary<string, object>
+            var filteredRoot = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
             {
                 ["filter"] = new Dictionary<string, object>
                 {
@@ -140,7 +148,7 @@ public static class BitrixService
                 ["select"] = new[] { "id", "title", "createdDate" },
                 ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
             });
-            filtered = ReadTaskList(filteredResult);
+            filtered = ReadTaskList(filteredRoot);
             scanned = filtered.Count;
         }
         catch (Exception ex)
@@ -150,14 +158,53 @@ public static class BitrixService
             filtered = new List<BitrixTaskInfo>();
         }
 
-        var match = PickTaskByRequestNumber(filtered, needle);
-        if (match is not null)
+        var exact = PickTaskByRequestNumber(filtered, needle);
+        if (exact is not null)
         {
-            return match;
+            return new BitrixTaskSearchResult { Task = exact };
         }
 
-        // Фолбэк: полный обход доступных задач (LIKE мог не сработать или
-        // задача лежит вне ожидаемого проекта).
+        // Похожая задача: тот же хвост номера (после дефиса) — ловит опечатки
+        // в буквах префикса (VNN/VNV), но не подставляет чужой номер молча.
+        var tail = needle.Contains('-') ? needle[(needle.LastIndexOf('-') + 1)..] : string.Empty;
+        List<BitrixTaskInfo> similar = new();
+        if (tail.Length >= 4)
+        {
+            try
+            {
+                var similarRoot = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
+                {
+                    ["filter"] = new Dictionary<string, object>
+                    {
+                        ["TITLE"] = "%" + tail + "%",
+                    },
+                    ["select"] = new[] { "id", "title", "createdDate" },
+                    ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
+                });
+                var tailTasks = ReadTaskList(similarRoot);
+                scanned = Math.Max(scanned, tailTasks.Count);
+                similar = tailTasks
+                    .Select(task => (task, parts: ParseTaskTitle(task.Title)))
+                    .Where(item => item.parts is not null
+                        && SameRequestTail(item.parts.RequestNumber, needle)
+                        && CommonPrefixLength(item.parts.RequestNumber, needle) >= 10)
+                    .Select(item => item.task)
+                    .OrderByDescending(task => task.TaskId)
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("bitrix", "поиск по хвосту номера задачи-заявки: " + ex.Message);
+            }
+        }
+
+        var similarMatch = similar.FirstOrDefault();
+        if (similarMatch is not null)
+        {
+            return new BitrixTaskSearchResult { Task = similarMatch, IsSimilarMatch = true, Scanned = scanned };
+        }
+
+        // Последний шанс: полный обход доступных задач (LIKE мог не сработать).
         for (var page = 0; page < MaxPages; page++)
         {
             var parameters = new Dictionary<string, object>
@@ -170,26 +217,47 @@ public static class BitrixService
                 parameters["start"] = page * 50;
             }
 
-            var result = await InvokeMethodAsync(config, "tasks.task.list", parameters);
-            var batch = ReadTaskList(result);
+            var root = await InvokeRootAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(root);
             scanned += batch.Count;
             var found = PickTaskByRequestNumber(batch, needle);
             if (found is not null)
             {
-                return found;
+                return new BitrixTaskSearchResult { Task = found };
             }
 
             if (batch.Count == 0
-                || !(result.ValueKind == JsonValueKind.Object && result.TryGetProperty("next", out var next)
+                || !(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("next", out var next)
                     && next.ValueKind == JsonValueKind.Number && next.TryGetInt32(out var nextStart) && nextStart > 0))
             {
                 break;
             }
         }
 
-        ErrorLog.Append("bitrix", "задача-заявка «" + needle + "» не найдена: просмотрено " + scanned +
-            " задач, доступных вебхуку. Проверьте, что вебхук-пользователь видит задачу и номер в названии совпадает.");
-        return null;
+        ErrorLog.Append("bitrix", "задача-заявка «" + needle + "» не найдена: доступно вебхуку " + scanned +
+            " задач. Проверьте, что вебхук-пользователь видит задачу и номер в названии совпадает.");
+        return new BitrixTaskSearchResult { Scanned = scanned };
+    }
+
+    /// <summary>Общий хвост номера после дефиса (без учёта регистра).</summary>
+    private static bool SameRequestTail(string candidate, string request)
+    {
+        var candidateTail = candidate.Contains('-') ? candidate[(candidate.LastIndexOf('-') + 1)..] : string.Empty;
+        var requestTail = request.Contains('-') ? request[(request.LastIndexOf('-') + 1)..] : string.Empty;
+        return candidateTail.Length > 0
+            && string.Equals(candidateTail, requestTail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CommonPrefixLength(string first, string second)
+    {
+        var length = Math.Min(first.Length, second.Length);
+        var common = 0;
+        while (common < length && char.ToUpperInvariant(first[common]) == char.ToUpperInvariant(second[common]))
+        {
+            common++;
+        }
+
+        return common;
     }
 
     private static BitrixTaskInfo? PickTaskByRequestNumber(List<BitrixTaskInfo> tasks, string requestNumber)
@@ -495,13 +563,14 @@ public static class BitrixService
                 parameters["start"] = start;
             }
 
-            var result = await InvokeMethodAsync(config, "tasks.task.list", parameters);
-            var batch = ReadTaskList(result);
+            var root = await InvokeRootAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(root);
             tasks.AddRange(batch);
 
-            if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("next", out var next))
+            // next/total лежат в корне ответа, а не внутри result.
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("next", out var next))
             {
-                var nextStart = ToInt(result, "next", -1);
+                var nextStart = ToInt(root, "next", -1);
                 if (nextStart > 0)
                 {
                     start = nextStart;
@@ -527,14 +596,14 @@ public static class BitrixService
     /// </summary>
     public static async Task<string?> GetLatestCreatedDateRawAsync(BitrixConfig config)
     {
-        var result = await InvokeMethodAsync(config, "tasks.task.list", new Dictionary<string, object>
+        var root = await InvokeRootAsync(config, "tasks.task.list", new Dictionary<string, object>
         {
             ["filter"] = new Dictionary<string, object> { ["GROUP_ID"] = config.ProjectId },
             ["select"] = new[] { "id", "createdDate" },
             ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
         });
 
-        var tasks = ReadTaskList(result);
+        var tasks = ReadTaskList(root);
         return tasks.Count == 0 ? null : tasks[0].CreatedDate;
     }
 
@@ -580,12 +649,30 @@ public static class BitrixService
         return tasks;
     }
 
-    /// <summary>Разбор узла tasks.task.list в список задач.</summary>
-    private static List<BitrixTaskInfo> ReadTaskList(JsonElement result)
+    /// <summary>
+    /// Разбор ответа tasks.task.list. Принимает корень ответа: задачи лежат в
+    /// result.tasks, при этом сам result бывает и массивом (зависит от портала).
+    /// </summary>
+    private static List<BitrixTaskInfo> ReadTaskList(JsonElement root)
     {
         var tasks = new List<BitrixTaskInfo>();
-        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("tasks", out var tasksElement)
-            || tasksElement.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("result", out var resultNode))
+        {
+            return tasks;
+        }
+
+        JsonElement tasksElement;
+        if (resultNode.ValueKind == JsonValueKind.Array)
+        {
+            tasksElement = resultNode;
+        }
+        else if (resultNode.ValueKind == JsonValueKind.Object
+            && resultNode.TryGetProperty("tasks", out var inner)
+            && inner.ValueKind == JsonValueKind.Array)
+        {
+            tasksElement = inner;
+        }
+        else
         {
             return tasks;
         }
