@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -109,6 +110,168 @@ public static class BitrixService
         }
 
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
+    }
+
+    /// <summary>Вложение задачи Bitrix (диск-объект, привязанный к задаче, чек-листу или комментарию).</summary>
+    public sealed class BitrixTaskFile
+    {
+        public long AttachedObjectId { get; init; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public long? Size { get; set; }
+
+        /// <summary>Где найдено: «задача», «чек-лист» или «комментарий».</summary>
+        public string Source { get; init; } = string.Empty;
+    }
+
+    /// <summary>Ключи, внутри которых ищутся id вложений диска.</summary>
+    private static readonly Regex FileKeyRegex = new("file|attach|webdav", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Все вложения задачи: файлы задачи (UF_TASK_WEBDAV_FILES и подобные),
+    /// чек-лист и комментарии. Нестандартные поля портала собираются рекурсивным
+    /// обходом JSON — где именно лежат файлы, зависит от версии портала.
+    /// Методы, на которые нет прав (например, чек-лист), не роняют обход.
+    /// </summary>
+    public static async Task<List<BitrixTaskFile>> GetTaskFilesAsync(BitrixConfig config, int taskId)
+    {
+        var files = new List<BitrixTaskFile>();
+        var seen = new HashSet<long>();
+
+        var taskResult = await InvokeMethodAsync(config, "tasks.task.get", new Dictionary<string, object>
+        {
+            ["taskId"] = taskId,
+            ["select"] = new[] { "*", "UF_*" },
+        });
+        var element = taskResult.ValueKind == JsonValueKind.Object && taskResult.TryGetProperty("task", out var task)
+            ? task
+            : taskResult;
+        CollectFileIds(element, "задача", files, seen);
+
+        try
+        {
+            var checklist = await InvokeMethodAsync(config, "tasks.task.checklist.get", new Dictionary<string, object>
+            {
+                ["taskId"] = taskId,
+            });
+            CollectFileIds(checklist, "чек-лист", files, seen);
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Append("bitrix", "чек-лист задачи " + taskId + ": " + ex.Message);
+        }
+
+        try
+        {
+            var comments = await InvokeMethodAsync(config, "task.commentitem.getlist", new Dictionary<string, object>
+            {
+                ["TASKID"] = taskId,
+            });
+            CollectFileIds(comments, "комментарий", files, seen);
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Append("bitrix", "комментарии задачи " + taskId + ": " + ex.Message);
+        }
+
+        return files;
+    }
+
+    /// <summary>
+    /// Рекурсивно собирает id вложений диска: числа и числовые строки внутри
+    /// полей, чьё имя содержит file/attach/webdav (FILES, UF_TASK_WEBDAV_FILES,
+    /// attachedObjectId и т.п.).
+    /// </summary>
+    private static void CollectFileIds(JsonElement element, string source, List<BitrixTaskFile> files, HashSet<long> seen, string? contextKey = null, int depth = 0)
+    {
+        if (depth > 8 || files.Count >= 50)
+        {
+            return;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    CollectFileIds(property.Value, source, files, seen, property.Name, depth + 1);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    CollectFileIds(item, source, files, seen, contextKey, depth + 1);
+                }
+
+                break;
+            case JsonValueKind.Number or JsonValueKind.String:
+                if (contextKey is null || !FileKeyRegex.IsMatch(contextKey))
+                {
+                    break;
+                }
+
+                if (long.TryParse(element.ToString(), out var id) && id > 0 && seen.Add(id))
+                {
+                    files.Add(new BitrixTaskFile { AttachedObjectId = id, Source = source });
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Скачивает вложение в destinationPath (через disk.attachedObject.get →
+    /// DOWNLOAD_URL; без URL — второй запрос disk.file.get по FILE_ID).
+    /// Заполняет имя и размер файла из портала.
+    /// </summary>
+    public static async Task DownloadTaskFileAsync(BitrixConfig config, BitrixTaskFile file, string destinationPath)
+    {
+        var attached = await InvokeMethodAsync(config, "disk.attachedObject.get", new Dictionary<string, object>
+        {
+            ["id"] = file.AttachedObjectId,
+        });
+
+        if (file.Name.Length == 0)
+        {
+            file.Name = ToText(attached, "NAME", ToText(attached, "name"));
+        }
+
+        if (file.Size is null)
+        {
+            var size = ToInt(attached, "SIZE", ToInt(attached, "size", 0));
+            if (size > 0)
+            {
+                file.Size = size;
+            }
+        }
+
+        var url = ToText(attached, "DOWNLOAD_URL", ToText(attached, "downloadUrl"));
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            var fileId = ToInt(attached, "FILE_ID", ToInt(attached, "fileId", 0));
+            if (fileId <= 0)
+            {
+                throw new InvalidOperationException("Bitrix не вернул ссылку на скачивание для вложения " + file.AttachedObjectId + ".");
+            }
+
+            var diskFile = await InvokeMethodAsync(config, "disk.file.get", new Dictionary<string, object>
+            {
+                ["id"] = fileId,
+            });
+            url = ToText(diskFile, "DOWNLOAD_URL", ToText(diskFile, "downloadUrl"));
+        }
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            throw new InvalidOperationException("Bitrix не вернул ссылку на скачивание для вложения " + file.AttachedObjectId + ".");
+        }
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        using var response = await client.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        await File.WriteAllBytesAsync(destinationPath, await response.Content.ReadAsByteArrayAsync());
     }
 
     /// <summary>

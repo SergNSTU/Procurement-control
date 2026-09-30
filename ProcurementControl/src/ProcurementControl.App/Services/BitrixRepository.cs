@@ -25,6 +25,26 @@ public static class BitrixRepository
         return result;
     }
 
+    /// <summary>Задача Bitrix, связанная со сделкой; 0 — связи нет.</summary>
+    public static int GetTaskIdForDeal(long dealId)
+    {
+        if (dealId <= 0)
+        {
+            return 0;
+        }
+
+        using var snapshot = PurchaseSnapshot.Create();
+        using var command = snapshot.Connection.CreateCommand();
+        command.CommandText = @"
+SELECT bitrix_task_id FROM bitrix_task_links
+WHERE deal_id = @deal_id
+ORDER BY bitrix_task_id DESC
+LIMIT 1;";
+        PurchaseWriteRepository.Add(command, "@deal_id", dealId);
+        var value = command.ExecuteScalar();
+        return value is null || value is DBNull ? 0 : Convert.ToInt32(value);
+    }
+
     /// <summary>Связывает сделку с задачей Bitrix (повторная вставка игнорируется).</summary>
     public static void LinkTask(long dealId, int taskId)
     {

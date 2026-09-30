@@ -846,44 +846,134 @@ public partial class PurchaseViewModel : ObservableObject
                 return;
             }
 
-            var sourcePath = dialog.FileName;
-            var dealId = deal.Id;
-            var dealNumber = deal.DealNumber;
-            var client = deal.Client;
-            var suppliers = Suppliers.ToList();
-
-            var dispatcher = Application.Current?.Dispatcher;
-            ProgressService.Begin("RFQ: чтение исходника…");
-            var worker = new Thread(() =>
-            {
-                Exception? error = null;
-                RfqSourceReadResult? source = null;
-                try
-                {
-                    source = RfqPrepareService.ReadSource(sourcePath);
-                }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-
-                if (dispatcher is null || dispatcher.CheckAccess())
-                {
-                    ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers);
-                }
-                else
-                {
-                    dispatcher.Invoke(() => ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers));
-                }
-            });
-            worker.SetApartmentState(ApartmentState.STA);
-            worker.IsBackground = true;
-            worker.Start();
+            StartRfqPrepare(dialog.FileName, deal.Id, deal.DealNumber, deal.Client);
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "RFQ поставщикам");
         }
+    }
+
+    /// <summary>
+    /// Шаг 1 конвейера: исходник берётся из задачи Bitrix, связанной со сделкой
+    /// (файлы задачи, чек-листа и комментариев; REST + вебхук из настроек Bitrix).
+    /// Скачанный файл идёт в ту же подготовку, что и ручной выбор.
+    /// </summary>
+    [RelayCommand]
+    private async Task LoadRfqFromBitrixAsync()
+    {
+        try
+        {
+            var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
+            if (Suppliers.Count == 0)
+            {
+                throw new InvalidOperationException("Добавьте поставщиков сделки перед рассылкой RFQ.");
+            }
+
+            var taskId = BitrixRepository.GetTaskIdForDeal(deal.Id);
+            if (taskId <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Сделка не связана с задачей Bitrix. Загрузите RFQ кнопкой «RFQ поставщикам» (файлом) или импортируйте сделку из Bitrix.");
+            }
+
+            var config = BitrixRepository.GetConfig();
+            if (!config.IsConfigured)
+            {
+                throw new InvalidOperationException("Bitrix не настроен: нет вебхука (bitrix_webhook_token).");
+            }
+
+            var dealId = deal.Id;
+            var dealNumber = deal.DealNumber;
+            var client = deal.Client;
+
+            ProgressService.Begin("Bitrix: поиск файлов задачи " + taskId + "…");
+            List<BitrixService.BitrixTaskFile> files;
+            try
+            {
+                files = await BitrixService.GetTaskFilesAsync(config, taskId);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            if (files.Count == 0)
+            {
+                MessageBox.Show(
+                    "В задаче " + taskId + " не найдено вложений (файлы задачи, чек-лист, комментарии).\n" +
+                    "Если файл лежит в чате — скачайте его и используйте кнопку «RFQ поставщикам».",
+                    "RFQ из Bitrix");
+                return;
+            }
+
+            BitrixService.BitrixTaskFile? selected = files[0];
+            if (files.Count > 1)
+            {
+                var picker = new RfqBitrixFilesWindow(dealNumber, files) { Owner = Application.Current.MainWindow };
+                if (picker.ShowDialog() != true || picker.SelectedFile is null)
+                {
+                    return;
+                }
+
+                selected = picker.SelectedFile;
+            }
+
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "rfq-bitrix-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var localPath = Path.Combine(tempDirectory,
+                string.IsNullOrWhiteSpace(selected.Name) ? "task_" + taskId + "_file.xlsx" : selected.Name);
+
+            ProgressService.Begin("Bitrix: скачивание " + (selected.Name.Length > 0 ? selected.Name : "вложения") + "…");
+            try
+            {
+                await BitrixService.DownloadTaskFileAsync(config, selected, localPath);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            StartRfqPrepare(localPath, dealId, dealNumber, client);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ из Bitrix");
+        }
+    }
+
+    /// <summary>Общая часть конвейера: чтение исходника и открытие окна подготовки.</summary>
+    private void StartRfqPrepare(string sourcePath, long dealId, string dealNumber, string client)
+    {
+        var suppliers = Suppliers.ToList();
+
+        var dispatcher = Application.Current?.Dispatcher;
+        ProgressService.Begin("RFQ: чтение исходника…");
+        var worker = new Thread(() =>
+        {
+            Exception? error = null;
+            RfqSourceReadResult? source = null;
+            try
+            {
+                source = RfqPrepareService.ReadSource(sourcePath);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+
+            if (dispatcher is null || dispatcher.CheckAccess())
+            {
+                ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers);
+            }
+            else
+            {
+                dispatcher.Invoke(() => ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers));
+            }
+        });
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.IsBackground = true;
+        worker.Start();
     }
 
     private void ContinueRfqPipeline(

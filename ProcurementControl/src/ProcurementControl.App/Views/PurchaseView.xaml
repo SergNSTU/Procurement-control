@@ -442,6 +442,11 @@
                                         Style="{StaticResource PrimaryButtonStyle}"
                                         Command="{Binding MergeRrfqCommand}"
                                         Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+                                <Button Content="RFQ из Bitrix"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding LoadRfqFromBitrixCommand}"
+                                        Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"
+                                        ToolTip="Загрузить файл заявки из задачи Bitrix, связанной со сделкой"/>
                                 <Button Content="RFQ поставщикам"
                                         Style="{StaticResource SecondaryButtonStyle}"
                                         Command="{Binding PrepareRfqCommand}"

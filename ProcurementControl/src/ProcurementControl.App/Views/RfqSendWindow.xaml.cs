@@ -29,11 +29,8 @@ public partial class RfqSendRow : ObservableObject
 public partial class RfqSendWindow : Window
 {
     private const string DefaultBodyTemplate =
-        "Добрый день!\r\n\r\n" +
-        "Прошу оценить условия поставки позиций из вложения по сделке {Deal} (клиент: {Client}).\r\n" +
-        "Просьба указать цену за штуку в USD, срок поставки и наличие.\r\n\r\n" +
-        "Заранее спасибо!\r\n" +
-        "С уважением, отдел закупок";
+        "Hello dear,\r\n" +
+        "Please send RRFQ";
 
     private const string TemplateSettingKey = "rfq.mail_template";
 
@@ -151,7 +148,7 @@ public partial class RfqSendWindow : Window
                         .Replace("{Deal}", _dealNumber)
                         .Replace("{Client}", string.IsNullOrWhiteSpace(_client) ? "—" : _client)
                         .Replace("{Supplier}", target.Supplier);
-                    OutlookService.CreateMailDraft(target.Email.Trim(), "RFQ " + _dealNumber, body, _attachments);
+                    OutlookService.CreateMailDraft(target.Email.Trim(), _dealNumber, body, _attachments);
                     created++;
                 }
 
