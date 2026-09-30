@@ -48,11 +48,13 @@ LIMIT 1;";
 
     /// <summary>
     /// Связывает сделку с задачей Bitrix (повторная вставка игнорируется).
-    /// Живая база старее схемы приложения: у bitrix_task_links бывают
+    /// source: 'import' — автоимпорт, 'rfq_pipeline' — конвейер RFQ, 'linked' —
+    /// прочее; вкладка «Bitrix API Test» показывает только импортные связи.
+    /// Живая база старше схемы приложения: у bitrix_task_links бывают
     /// дополнительные NOT NULL-колонки (например, updated_at), поэтому список
     /// колонок берётся из PRAGMA и все обязательные заполняются.
     /// </summary>
-    public static void LinkTask(long dealId, int taskId)
+    public static void LinkTask(long dealId, int taskId, string source = "linked")
     {
         if (dealId <= 0 || taskId <= 0)
         {
@@ -85,6 +87,7 @@ LIMIT 1;";
                         "deal_id" => "@deal_id",
                         "bitrix_task_id" => "@task_id",
                         "created_at" or "updated_at" => "@now",
+                        "source" => "@source",
                         _ => notNull ? DefaultValueLiteral(type) : null,
                     };
                     if (value is null)
@@ -110,6 +113,7 @@ WHERE NOT EXISTS (SELECT 1 FROM bitrix_task_links WHERE bitrix_task_id = @task_i
             PurchaseWriteRepository.Add(command, "@deal_id", dealId);
             PurchaseWriteRepository.Add(command, "@task_id", taskId);
             PurchaseWriteRepository.Add(command, "@now", now);
+            PurchaseWriteRepository.Add(command, "@source", source);
             command.ExecuteNonQuery();
             return 0;
         });

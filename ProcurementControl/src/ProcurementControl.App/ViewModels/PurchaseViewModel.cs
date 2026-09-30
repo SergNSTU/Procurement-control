@@ -916,7 +916,7 @@ public partial class PurchaseViewModel : ObservableObject
                     }
                 }
 
-                BitrixRepository.LinkTask(deal.Id, search.Task.TaskId);
+                BitrixRepository.LinkTask(deal.Id, search.Task.TaskId, "rfq_pipeline");
                 taskId = search.Task.TaskId;
                 StatusText = "Сделка связана с задачей Bitrix " + taskId;
                 ToastService.Show("Задача " + taskId + ": " + search.Task.Title, ToastKind.Info);

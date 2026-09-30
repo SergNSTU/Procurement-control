@@ -95,6 +95,7 @@ SELECT d.id, d.deal_number, IFNULL(d.client, ''), IFNULL(d.board_count, ''),
        IFNULL(d.status, ''), IFNULL(d.created_at, ''), l.bitrix_task_id
 FROM bitrix_task_links l
 JOIN deals d ON d.id = l.deal_id
+WHERE IFNULL(l.source, 'import') = 'import'
 ORDER BY d.created_at DESC, d.id DESC
 LIMIT @limit;";
         PurchaseWriteRepository.Add(command, "@limit", limit);
@@ -216,7 +217,7 @@ LIMIT @limit;";
                 {
                     // Сделка с таким номером уже есть (создана вручную) — не
                     // трогаем её статус, только запоминаем связь с задачей.
-                    BitrixRepository.LinkTask(existing.Id, task.TaskId);
+                    BitrixRepository.LinkTask(existing.Id, task.TaskId, "import");
                     linked.Add(task.TaskId);
                     report.AlreadyPresent++;
                     continue;
@@ -230,7 +231,7 @@ LIMIT @limit;";
                     Status = "RFQ",
                     BoardCount = parts.Quantity?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 });
-                BitrixRepository.LinkTask(dealId, task.TaskId);
+                BitrixRepository.LinkTask(dealId, task.TaskId, "import");
                 linked.Add(task.TaskId);
                 existingDeals.Add((dealId, number));
                 report.Imported.Add(number + (parts.Client.Length > 0 ? " — " + parts.Client : string.Empty));

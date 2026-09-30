@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS reminder_suppressions(
         EnsureColumn(connection, "quote_history", "lead_total_days", "REAL");
         EnsureColumn(connection, "quote_history", "is_price_comparable", "INTEGER DEFAULT 1");
         EnsureColumn(connection, "notification_state", "last_shown_at", "TEXT");
+        EnsureColumn(connection, "bitrix_task_links", "source", "TEXT");
+        BackfillBitrixTaskLinkSources(connection);
         BackfillRequestedQuantities(connection);
         ClassifyLegacyPiImports(connection);
         ClassifyLegacyComparisonResults(connection);
@@ -166,6 +168,18 @@ CREATE TABLE IF NOT EXISTS reminder_suppressions(
         ConsolidateDealBatches(connection);
         BackfillDocumentImportPositionKeys(connection);
         SqliteConnection.ClearPool(connection);
+    }
+
+    /// <summary>
+    /// Связи, появившиеся до метки источника, созданы не автоимпортом (импорт
+    /// заработал позже), а конвейером RFQ; вкладка «Bitrix API Test» показывает
+    /// только импортные.
+    /// </summary>
+    private static void BackfillBitrixTaskLinkSources(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE bitrix_task_links SET source='rfq_pipeline' WHERE source IS NULL;";
+        command.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -625,7 +639,8 @@ CREATE TABLE IF NOT EXISTS bitrix_task_links(
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     deal_id        INTEGER,
     bitrix_task_id INTEGER,
-    created_at     TEXT
+    created_at     TEXT,
+    source         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workflow_templates(
