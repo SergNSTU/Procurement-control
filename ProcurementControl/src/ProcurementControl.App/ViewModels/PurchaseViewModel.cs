@@ -831,9 +831,12 @@ public partial class PurchaseViewModel : ObservableObject
         try
         {
             var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
-            if (Suppliers.Count == 0)
+
+            // Поставщиков на этапе подготовки не требуем — они нужны только
+            // для рассылки, и их можно завести, пока RFQ уже собран.
+            if (TrySendExistingRfq(deal))
             {
-                throw new InvalidOperationException("Добавьте поставщиков сделки перед рассылкой RFQ.");
+                return;
             }
 
             var dialog = new OpenFileDialog
@@ -865,9 +868,10 @@ public partial class PurchaseViewModel : ObservableObject
         try
         {
             var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
-            if (Suppliers.Count == 0)
+
+            if (TrySendExistingRfq(deal))
             {
-                throw new InvalidOperationException("Добавьте поставщиков сделки перед рассылкой RFQ.");
+                return;
             }
 
             var config = BitrixRepository.GetConfig();
@@ -998,6 +1002,70 @@ public partial class PurchaseViewModel : ObservableObject
         worker.Start();
     }
 
+    /// <summary>
+    /// Если к сделке уже прикреплён RFQ — предлагает разослать готовый файл без
+    /// пересборки. Возвращает true, когда пользователь выбрал рассылку (или
+    /// закрыл предложение рассылкой), false — нужно собирать новый.
+    /// </summary>
+    private bool TrySendExistingRfq(PurchaseDealRow deal)
+    {
+        var rfqDocument = Documents.FirstOrDefault(document =>
+            string.Equals(document.DocumentType, "RFQ", StringComparison.OrdinalIgnoreCase));
+        if (rfqDocument is null)
+        {
+            return false;
+        }
+
+        var answer = MessageBox.Show(
+            "У сделки уже есть RFQ: " + rfqDocument.OriginalName + ".\r\n\r\n" +
+            "Да — разослать готовый файл поставщикам\r\n" +
+            "Нет — собрать новый RFQ из исходника",
+            "RFQ поставщикам", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return false;
+        }
+
+        OpenRfqSend(deal, rfqDocument);
+        return true;
+    }
+
+    private void OpenRfqSend(PurchaseDealRow deal, PurchaseDocumentRow rfqDocument)
+    {
+        try
+        {
+            if (Suppliers.Count == 0)
+            {
+                MessageBox.Show(
+                    "У сделки нет поставщиков. Добавьте их в карточке сделки (кнопка «Добавить поставщика»)\r\n" +
+                    "и снова нажмите «RFQ поставщикам» — приложение предложит разослать готовый файл.",
+                    "RFQ поставщикам");
+                return;
+            }
+
+            var file = PurchaseWriteSession.Execute(connection => PurchaseDocumentsStore.ResolveDocumentFile(
+                connection, rfqDocument.Id, rfqDocument.StoredPath, rfqDocument.OriginalName, rfqDocument.FileHash));
+            if (!file.Found)
+            {
+                throw new InvalidOperationException("Файл RFQ не найден на диске: " + file.Path);
+            }
+
+            var sendWindow = new RfqSendWindow(deal.DealNumber, deal.Client, Suppliers.ToList(), new[] { file.Path })
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (sendWindow.ShowDialog() == true)
+            {
+                StatusText = "Черновиков создано: " + sendWindow.CreatedDrafts;
+                ToastService.Show("Черновиков создано: " + sendWindow.CreatedDrafts, ToastKind.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
     private void ContinueRfqPipeline(
         Exception? error,
         RfqSourceReadResult? source,
@@ -1045,6 +1113,19 @@ public partial class PurchaseViewModel : ObservableObject
             }
 
             LoadDocuments();
+
+            if (Suppliers.Count == 0)
+            {
+                // Поставщиков можно завести позже: повторное нажатие «RFQ
+                // поставщикам» предложит разослать готовый файл без пересборки.
+                StatusText = "RFQ готов и прикреплён к сделке; для рассылки добавьте поставщиков";
+                MessageBox.Show(
+                    "RFQ собран и прикреплён к сделке (вместе со списком «Для Компэла»).\r\n\r\n" +
+                    "Чтобы разослать: добавьте поставщиков сделки и снова нажмите\r\n" +
+                    "«RFQ поставщикам» — приложение предложит отправить готовый файл.",
+                    "RFQ поставщикам");
+                return;
+            }
 
             var sendWindow = new RfqSendWindow(dealNumber, client, suppliers, new[] { storedRfq })
             {

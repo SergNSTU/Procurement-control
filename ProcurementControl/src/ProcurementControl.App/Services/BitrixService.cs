@@ -113,10 +113,11 @@ public static class BitrixService
     }
 
     /// <summary>
-    /// Ищет задачу проекта по номеру заявки в названии («Номер/Клиент/…»).
+    /// Ищет задачу по номеру заявки в названии («Номер/Клиент/…») по всему
+    /// порталу (без привязки к проекту — задача может лежать в другой группе).
     /// Сначала фильтр по TITLE с %-подстановкой; если портал его не поддержал —
-    /// постраничный обход проекта с проверкой названий. Возвращается самая
-    /// свежая из подходящих задач; null — ничего не нашлось.
+    /// постраничный обход всех доступных вебхуку задач. Возвращается самая
+    /// свежая из подходящих задач; null — ничего не нашлось (причина — в лог).
     /// </summary>
     public static async Task<BitrixTaskInfo?> FindTaskByRequestNumberAsync(BitrixConfig config, string requestNumber)
     {
@@ -126,6 +127,7 @@ public static class BitrixService
             return null;
         }
 
+        var scanned = 0;
         List<BitrixTaskInfo> filtered;
         try
         {
@@ -133,13 +135,13 @@ public static class BitrixService
             {
                 ["filter"] = new Dictionary<string, object>
                 {
-                    ["GROUP_ID"] = config.ProjectId,
                     ["TITLE"] = "%" + needle + "%",
                 },
                 ["select"] = new[] { "id", "title", "createdDate" },
                 ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
             });
             filtered = ReadTaskList(filteredResult);
+            scanned = filtered.Count;
         }
         catch (Exception ex)
         {
@@ -154,12 +156,12 @@ public static class BitrixService
             return match;
         }
 
-        // Фолбэк: полный обход проекта (фильтр LIKE мог не сработать).
+        // Фолбэк: полный обход доступных задач (LIKE мог не сработать или
+        // задача лежит вне ожидаемого проекта).
         for (var page = 0; page < MaxPages; page++)
         {
             var parameters = new Dictionary<string, object>
             {
-                ["filter"] = new Dictionary<string, object> { ["GROUP_ID"] = config.ProjectId },
                 ["select"] = new[] { "id", "title", "createdDate" },
                 ["order"] = new Dictionary<string, object> { ["ID"] = "ASC" },
             };
@@ -170,6 +172,7 @@ public static class BitrixService
 
             var result = await InvokeMethodAsync(config, "tasks.task.list", parameters);
             var batch = ReadTaskList(result);
+            scanned += batch.Count;
             var found = PickTaskByRequestNumber(batch, needle);
             if (found is not null)
             {
@@ -184,6 +187,8 @@ public static class BitrixService
             }
         }
 
+        ErrorLog.Append("bitrix", "задача-заявка «" + needle + "» не найдена: просмотрено " + scanned +
+            " задач, доступных вебхуку. Проверьте, что вебхук-пользователь видит задачу и номер в названии совпадает.");
         return null;
     }
 
