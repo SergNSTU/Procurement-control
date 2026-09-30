@@ -363,8 +363,23 @@
                     </DockPanel>
                     <TextBlock Grid.Column="9" Style="{StaticResource FieldLabel}" Text="Комментарий:"/>
                     <TextBox Grid.Column="10" MinWidth="180" Text="{Binding EditComment, UpdateSourceTrigger=PropertyChanged}"/>
-                    <Button Grid.Column="12" Content="Сохранить" Style="{StaticResource PrimaryButtonStyle}"
-                            Command="{Binding SaveDealCommand}" Height="30"/>
+                    <StackPanel Grid.Column="12">
+                        <Button Content="Сохранить" Style="{StaticResource PrimaryButtonStyle}"
+                                Command="{Binding SaveDealCommand}" Height="30"/>
+                        <TextBlock Text="Несохранённые изменения" Foreground="{StaticResource WarnTextBrush}"
+                                   FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasUnsavedChanges}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
                 </Grid>
             </Border>
 

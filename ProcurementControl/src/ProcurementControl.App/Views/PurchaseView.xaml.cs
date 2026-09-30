@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using ProcurementControl.Models;
 using ProcurementControl.ViewModels;
 using ProcurementControl.Services;
@@ -15,9 +16,14 @@ public partial class PurchaseView : UserControl
     private bool _savingDealCell;
     private bool _savingSupplierCell;
     private bool _allowDealCellEdit;
+    private bool _hasPendingColumnWidthSave;
+    private readonly DispatcherTimer _columnWidthSaveTimer;
     public PurchaseView()
     {
         InitializeComponent();
+        _columnWidthSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _columnWidthSaveTimer.Tick += (_, _) => SaveDealColumnWidths();
+        Unloaded += (_, _) => SaveDealColumnWidths();
     }
 
     private void DealsGrid_Loaded(object sender, RoutedEventArgs e)
@@ -43,7 +49,24 @@ public partial class PurchaseView : UserControl
 
     private void DealsGrid_ColumnWidthChanged(object? sender, EventArgs e)
     {
-        if (!_restoringDealColumns) GridColumnSettings.Save(DealsGrid, "ui.purchase.deals.column_widths");
+        if (_restoringDealColumns)
+        {
+            return;
+        }
+
+        _columnWidthSaveTimer.Stop();
+        _hasPendingColumnWidthSave = true;
+        _columnWidthSaveTimer.Start();
+    }
+
+    private void SaveDealColumnWidths()
+    {
+        _columnWidthSaveTimer.Stop();
+        if (!_restoringDealColumns && _hasPendingColumnWidthSave)
+        {
+            GridColumnSettings.Save(DealsGrid, "ui.purchase.deals.column_widths");
+            _hasPendingColumnWidthSave = false;
+        }
     }
 
     /// <summary>Открывает специальные редакторы дат по двойному щелчку.</summary>

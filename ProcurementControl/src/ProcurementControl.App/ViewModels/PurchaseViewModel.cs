@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -50,6 +51,10 @@ public partial class PurchaseViewModel : ObservableObject
     private PurchaseSnapshot? _snapshot;
     private PurchaseRepository? _repository;
     private List<PurchaseDealRow> _allDeals = new();
+    private readonly DispatcherTimer _searchTimer;
+    private PurchaseDealRow? _editorDeal;
+    private bool _isLoadingEditor;
+    private bool _isRestoringSelection;
 
     [ObservableProperty]
     private string _searchText = string.Empty;
@@ -91,6 +96,9 @@ public partial class PurchaseViewModel : ObservableObject
     [ObservableProperty] private string _editAssemblyLocation = string.Empty;
 
     [ObservableProperty]
+    private bool _hasUnsavedChanges;
+
+    [ObservableProperty]
     private string _archiveButtonText = "В архив";
 
     // Панель документов выбранной сделки (аналог $docsPanel/$docsGrid).
@@ -128,20 +136,58 @@ public partial class PurchaseViewModel : ObservableObject
     public PurchaseViewModel()
     {
         _selectedFilter = Filters[0];
+        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _searchTimer.Tick += (_, _) =>
+        {
+            _searchTimer.Stop();
+            ApplyView();
+        };
         Load();
     }
 
-    partial void OnSearchTextChanged(string value) => ApplyView();
+    partial void OnSearchTextChanged(string value)
+    {
+        _searchTimer.Stop();
+        _searchTimer.Start();
+    }
 
     partial void OnSelectedFilterChanged(FilterOption value) => ApplyView();
 
     partial void OnSelectedDealChanged(PurchaseDealRow? value)
     {
+        if (!_isRestoringSelection && HasUnsavedChanges && _editorDeal?.Id != value?.Id)
+        {
+            var answer = MessageBox.Show(
+                "В карточке сделки есть несохранённые изменения. Отменить их и перейти к другой сделке?",
+                "Несохранённые изменения",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.Yes)
+            {
+                _isRestoringSelection = true;
+                SelectedDeal = _editorDeal;
+                _isRestoringSelection = false;
+                return;
+            }
+        }
+
         FillEditPanel(value);
         SelectedSupplier = null;
         LoadSuppliers();
         LoadDocuments();
     }
+
+    partial void OnEditClientChanged(string value) => MarkEditorDirty();
+    partial void OnEditDealNumberChanged(string value) => MarkEditorDirty();
+    partial void OnEditBoardCountChanged(string value) => MarkEditorDirty();
+    partial void OnEditStatusChanged(string value) => MarkEditorDirty();
+    partial void OnEditPeriodChanged(string value) => MarkEditorDirty();
+    partial void OnEditCommentChanged(string value) => MarkEditorDirty();
+    partial void OnEditPriorityChanged(string value) => MarkEditorDirty();
+    partial void OnEditTrackingStatusChanged(string value) => MarkEditorDirty();
+    partial void OnEditExecutorChanged(string value) => MarkEditorDirty();
+    partial void OnEditReminderDateChanged(string value) => MarkEditorDirty();
+    partial void OnEditAssemblyLocationChanged(string value) => MarkEditorDirty();
 
     [RelayCommand]
     private void Reload() => Load();
@@ -277,6 +323,7 @@ public partial class PurchaseViewModel : ObservableObject
             });
             ApplyEditorValues(deal);
             RefreshEditedDealInPlace(deal);
+            HasUnsavedChanges = false;
             StatusText = "Сделка сохранена";
             ToastService.Show(StatusText, ToastKind.Success);
         }
@@ -1211,6 +1258,7 @@ public partial class PurchaseViewModel : ObservableObject
     /// <summary>Заполнить панель редактирования полями выбранной сделки.</summary>
     private void FillEditPanel(PurchaseDealRow? deal)
     {
+        _isLoadingEditor = true;
         EditClient = deal?.Client ?? string.Empty;
         EditDealNumber = deal?.DealNumber ?? string.Empty;
         EditBoardCount = deal?.BoardCount ?? string.Empty;
@@ -1223,6 +1271,20 @@ public partial class PurchaseViewModel : ObservableObject
         EditReminderDate = deal?.ReminderDate ?? string.Empty;
         EditAssemblyLocation = deal?.AssemblyLocation ?? string.Empty;
         ArchiveButtonText = deal?.Archived == 1 ? "Вернуть" : "В архив";
+        _editorDeal = deal;
+        HasUnsavedChanges = false;
+        _isLoadingEditor = false;
+    }
+
+    private void MarkEditorDirty()
+    {
+        if (_isLoadingEditor || SelectedDeal is null)
+        {
+            return;
+        }
+
+        HasUnsavedChanges = true;
+        StatusText = "Есть несохранённые изменения";
     }
 
     private QuoteImportSaveResult ImportQuotes(IReadOnlyList<(string Path, string Supplier)> sources, string comment, PurchaseDealRow deal)
