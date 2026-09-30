@@ -112,6 +112,89 @@ public static class BitrixService
         return root.TryGetProperty("result", out var result) ? result.Clone() : default;
     }
 
+    /// <summary>
+    /// Ищет задачу проекта по номеру заявки в названии («Номер/Клиент/…»).
+    /// Сначала фильтр по TITLE с %-подстановкой; если портал его не поддержал —
+    /// постраничный обход проекта с проверкой названий. Возвращается самая
+    /// свежая из подходящих задач; null — ничего не нашлось.
+    /// </summary>
+    public static async Task<BitrixTaskInfo?> FindTaskByRequestNumberAsync(BitrixConfig config, string requestNumber)
+    {
+        var needle = requestNumber.Trim();
+        if (needle.Length == 0)
+        {
+            return null;
+        }
+
+        List<BitrixTaskInfo> filtered;
+        try
+        {
+            var filteredResult = await InvokeMethodAsync(config, "tasks.task.list", new Dictionary<string, object>
+            {
+                ["filter"] = new Dictionary<string, object>
+                {
+                    ["GROUP_ID"] = config.ProjectId,
+                    ["TITLE"] = "%" + needle + "%",
+                },
+                ["select"] = new[] { "id", "title", "createdDate" },
+                ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
+            });
+            filtered = ReadTaskList(filteredResult);
+        }
+        catch (Exception ex)
+        {
+            // Портал мог не принять %-фильтр — идём полным обходом.
+            ErrorLog.Append("bitrix", "поиск по TITLE задачи-заявки: " + ex.Message);
+            filtered = new List<BitrixTaskInfo>();
+        }
+
+        var match = PickTaskByRequestNumber(filtered, needle);
+        if (match is not null)
+        {
+            return match;
+        }
+
+        // Фолбэк: полный обход проекта (фильтр LIKE мог не сработать).
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var parameters = new Dictionary<string, object>
+            {
+                ["filter"] = new Dictionary<string, object> { ["GROUP_ID"] = config.ProjectId },
+                ["select"] = new[] { "id", "title", "createdDate" },
+                ["order"] = new Dictionary<string, object> { ["ID"] = "ASC" },
+            };
+            if (page > 0)
+            {
+                parameters["start"] = page * 50;
+            }
+
+            var result = await InvokeMethodAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(result);
+            var found = PickTaskByRequestNumber(batch, needle);
+            if (found is not null)
+            {
+                return found;
+            }
+
+            if (batch.Count == 0
+                || !(result.ValueKind == JsonValueKind.Object && result.TryGetProperty("next", out var next)
+                    && next.ValueKind == JsonValueKind.Number && next.TryGetInt32(out var nextStart) && nextStart > 0))
+            {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    private static BitrixTaskInfo? PickTaskByRequestNumber(List<BitrixTaskInfo> tasks, string requestNumber)
+        => tasks.Where(task => string.Equals(
+                    ParseTaskTitle(task.Title)?.RequestNumber,
+                    requestNumber,
+                    StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(task => task.TaskId)
+            .FirstOrDefault();
+
     /// <summary>Вложение задачи Bitrix (диск-объект, привязанный к задаче, чек-листу или комментарию).</summary>
     public sealed class BitrixTaskFile
     {

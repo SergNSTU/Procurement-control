@@ -870,17 +870,39 @@ public partial class PurchaseViewModel : ObservableObject
                 throw new InvalidOperationException("Добавьте поставщиков сделки перед рассылкой RFQ.");
             }
 
-            var taskId = BitrixRepository.GetTaskIdForDeal(deal.Id);
-            if (taskId <= 0)
-            {
-                throw new InvalidOperationException(
-                    "Сделка не связана с задачей Bitrix. Загрузите RFQ кнопкой «RFQ поставщикам» (файлом) или импортируйте сделку из Bitrix.");
-            }
-
             var config = BitrixRepository.GetConfig();
             if (!config.IsConfigured)
             {
                 throw new InvalidOperationException("Bitrix не настроен: нет вебхука (bitrix_webhook_token).");
+            }
+
+            var taskId = BitrixRepository.GetTaskIdForDeal(deal.Id);
+            if (taskId <= 0)
+            {
+                // Сделка создана вручную, но задача в Bitrix может существовать:
+                // ищем по номеру заявки в названии и связываем навсегда.
+                ProgressService.Begin("Bitrix: поиск задачи по номеру " + deal.DealNumber + "…");
+                BitrixTaskInfo? found;
+                try
+                {
+                    found = await BitrixService.FindTaskByRequestNumberAsync(config, deal.DealNumber);
+                }
+                finally
+                {
+                    ProgressService.End();
+                }
+
+                if (found is null)
+                {
+                    throw new InvalidOperationException(
+                        "В проекте Bitrix «Заявка на расчет КС в РФ» нет задачи с номером " + deal.DealNumber +
+                        " в названии. Если задача в другом проекте или номер в названии другой — загрузите RFQ файлом («RFQ поставщикам»).");
+                }
+
+                BitrixRepository.LinkTask(deal.Id, found.TaskId);
+                taskId = found.TaskId;
+                StatusText = "Сделка связана с задачей Bitrix " + taskId;
+                ToastService.Show("Найдена задача " + taskId + " — связь сохранена", ToastKind.Info);
             }
 
             var dealId = deal.Id;
