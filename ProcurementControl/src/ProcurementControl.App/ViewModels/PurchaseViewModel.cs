@@ -819,6 +819,141 @@ public partial class PurchaseViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Конвейер RFQ по сделке (ветка rfq-pipeline): исходник заявки → подготовка
+    /// поставщицкого файла (зелёные строки) → рассылка черновиков поставщикам.
+    /// Чтение исходника — в фоновом STA-потоке (Excel COM), собранные файлы
+    /// регистрируются в документах сделки.
+    /// </summary>
+    [RelayCommand]
+    private void PrepareRfq()
+    {
+        try
+        {
+            var deal = SelectedDeal ?? throw new InvalidOperationException("Выберите сделку.");
+            if (Suppliers.Count == 0)
+            {
+                throw new InvalidOperationException("Добавьте поставщиков сделки перед рассылкой RFQ.");
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Title = "Исходный RFQ (заявка клиента)",
+                Filter = "Excel files (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|All files (*.*)|*.*",
+            };
+            if (dialog.ShowDialog(Application.Current.MainWindow) != true)
+            {
+                return;
+            }
+
+            var sourcePath = dialog.FileName;
+            var dealId = deal.Id;
+            var dealNumber = deal.DealNumber;
+            var client = deal.Client;
+            var suppliers = Suppliers.ToList();
+
+            var dispatcher = Application.Current?.Dispatcher;
+            ProgressService.Begin("RFQ: чтение исходника…");
+            var worker = new Thread(() =>
+            {
+                Exception? error = null;
+                RfqSourceReadResult? source = null;
+                try
+                {
+                    source = RfqPrepareService.ReadSource(sourcePath);
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+
+                if (dispatcher is null || dispatcher.CheckAccess())
+                {
+                    ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers);
+                }
+                else
+                {
+                    dispatcher.Invoke(() => ContinueRfqPipeline(error, source, dealId, dealNumber, client, suppliers));
+                }
+            });
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.IsBackground = true;
+            worker.Start();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
+    private void ContinueRfqPipeline(
+        Exception? error,
+        RfqSourceReadResult? source,
+        long dealId,
+        string dealNumber,
+        string client,
+        List<SupplierRow> suppliers)
+    {
+        ProgressService.End();
+        try
+        {
+            if (error is not null)
+            {
+                throw error;
+            }
+
+            if (source is null || source.Rows.Count == 0)
+            {
+                throw new InvalidOperationException("В исходнике не найдено ни одной позиции.");
+            }
+
+            var prepareWindow = new RfqPrepareWindow(dealNumber, client, source, Path.GetTempPath())
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (prepareWindow.ShowDialog() != true)
+            {
+                return;
+            }
+
+            // Собранные файлы регистрируются в документах сделки; письма
+            // прикрепляют копию из хранилища, временные файлы больше не нужны.
+            var storedRfq = PurchaseDocumentsStore.AddDocument(
+                dealId, 0, "RFQ", prepareWindow.SupplierFilePath, folderName: "RFQ");
+            try
+            {
+                PurchaseDocumentsStore.AddDocument(
+                    dealId, 0, "Other", prepareWindow.CompelFilePath,
+                    folderName: "RFQ",
+                    displayName: Path.GetFileName(prepareWindow.CompelFilePath));
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("documents", ex);
+            }
+
+            LoadDocuments();
+
+            var sendWindow = new RfqSendWindow(dealNumber, client, suppliers, new[] { storedRfq })
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (sendWindow.ShowDialog() == true)
+            {
+                StatusText = "RFQ подготовлен, черновиков: " + sendWindow.CreatedDrafts;
+                ToastService.Show("Черновиков создано: " + sendWindow.CreatedDrafts, ToastKind.Success);
+            }
+            else
+            {
+                StatusText = "RFQ подготовлен и прикреплён к сделке";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ поставщикам");
+        }
+    }
+
     /// <summary>Заполнить панель редактирования полями выбранной сделки.</summary>
     private void FillEditPanel(PurchaseDealRow? deal)
     {

@@ -442,6 +442,11 @@
                                         Style="{StaticResource PrimaryButtonStyle}"
                                         Command="{Binding MergeRrfqCommand}"
                                         Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+                                <Button Content="RFQ поставщикам"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding PrepareRfqCommand}"
+                                        Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"
+                                        ToolTip="Конвейер RFQ: исходник заявки → позиции для поставщиков → черновики писем"/>
                                 <TextBlock Text="Документы сделки: перетащите или выберите файлы"
                                            Foreground="{StaticResource MutedBrush}"
                                            FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
