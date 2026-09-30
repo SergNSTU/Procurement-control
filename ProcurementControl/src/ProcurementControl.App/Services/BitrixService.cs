@@ -92,7 +92,12 @@ public static class BitrixService
     public static async Task<JsonElement> InvokeRootAsync(BitrixConfig config, string method, object parameters)
     {
         var uri = BuildMethodUri(config, method);
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(TimeoutSeconds) };
+        // UseProxy=false: портал доступен напрямую, а системный прокси
+        // (Hiddify на 127.0.0.1:10809) включён не всегда и ронял все запросы.
+        using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+        {
+            Timeout = TimeSpan.FromSeconds(TimeoutSeconds),
+        };
         using var response = await client.PostAsJsonAsync(uri, parameters);
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -468,7 +473,12 @@ public static class BitrixService
             throw new InvalidOperationException("Bitrix не вернул ссылку на скачивание для вложения " + file.AttachedObjectId + ".");
         }
 
-        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        // UseProxy=false: портал доступен напрямую, а системный прокси
+        // (Hiddify на 127.0.0.1:10809) включён не всегда и ронял все запросы.
+        using var client = new HttpClient(new HttpClientHandler { UseProxy = false })
+        {
+            Timeout = TimeSpan.FromMinutes(2),
+        };
         using var response = await client.GetAsync(url);
         response.EnsureSuccessStatusCode();
         await File.WriteAllBytesAsync(destinationPath, await response.Content.ReadAsByteArrayAsync());
