@@ -66,7 +66,8 @@ LIMIT 1;";
             var values = new List<string>();
             using (var info = connection.CreateCommand())
             {
-                info.CommandText = "SELECT name, type, notnull, dflt_value FROM pragma_table_info('bitrix_task_links');";
+                // notnull — служебное слово SQLite (оператор NOTNULL), поэтому в кавычках.
+                info.CommandText = "SELECT name, type, \"notnull\", dflt_value FROM pragma_table_info('bitrix_task_links');";
                 using var reader = info.ExecuteReader();
                 while (reader.Read())
                 {
