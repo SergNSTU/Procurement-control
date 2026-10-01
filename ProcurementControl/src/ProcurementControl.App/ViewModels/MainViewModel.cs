@@ -20,6 +20,7 @@ public partial class MainViewModel : ObservableObject
     private DispatcherTimer? _notificationTimer;
     private string? _lastMailImportError;
     private string? _lastBitrixImportError;
+    private string? _lastWarehouseImportError;
 
     public ObservableCollection<NavigationItem> NavItems { get; } = new();
 
@@ -93,6 +94,7 @@ public partial class MainViewModel : ObservableObject
             AppPage.SupplierAnalytics => new SupplierAnalyticsViewModel(),
             AppPage.QuoteBase => new QuoteBaseViewModel(),
             AppPage.PriceSearch => new PriceSearchViewModel(),
+            AppPage.CrossReference => new CrossReferenceViewModel(),
             AppPage.History => new HistoryViewModel(() => GetSelectedPurchaseDealId()),
             AppPage.Instructions => new InstructionsViewModel(),
             AppPage.Settings => new SettingsViewModel(),
@@ -143,6 +145,7 @@ public partial class MainViewModel : ObservableObject
         {
             NotificationCenter.Shutdown();
             MailImportNotifier.Shutdown();
+            WarehouseArrivalNotifier.Shutdown();
         };
 
         _notificationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
@@ -151,6 +154,7 @@ public partial class MainViewModel : ObservableObject
             NotificationCenter.Check();
             CheckSupplierMail();
             CheckBitrixDeals();
+            CheckWarehouseArrival();
         };
         _notificationTimer.Start();
 
@@ -158,6 +162,7 @@ public partial class MainViewModel : ObservableObject
         NotificationCenter.Check();
         CheckSupplierMail();
         CheckBitrixDeals();
+        CheckWarehouseArrival();
     }
 
     /// <summary>
@@ -199,6 +204,57 @@ public partial class MainViewModel : ObservableObject
             {
                 // Ошибка импорта не должна ронять общий таймер уведомлений.
                 ErrorLog.Append("mail", exception);
+            }
+        });
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.IsBackground = true;
+        worker.Start();
+    }
+
+    /// <summary>
+    /// Авто-проверка файла прихода со склада (папка «CE CT WE»): по своим часам
+    /// раз в два часа (WarehouseArrivalImportService.DueForAutoCheck) тянет
+    /// свежий Excel из почты, сверяет заказы из комментариев поставщиков.
+    /// STA-поток — как для почтового импорта: Outlook и Excel Object Model
+    /// требуют STA, иначе замораживают интерфейс.
+    /// </summary>
+    private void CheckWarehouseArrival()
+    {
+        if (!WarehouseArrivalImportService.DueForAutoCheck)
+        {
+            return;
+        }
+
+        var worker = new Thread(() =>
+        {
+            try
+            {
+                var report = WarehouseArrivalImportService.Check();
+                if (report.Error is not null)
+                {
+                    if (report.Error != _lastWarehouseImportError)
+                    {
+                        _lastWarehouseImportError = report.Error;
+                        ToastService.Show("Приход со склада: " + report.Error, ToastKind.Warn);
+                    }
+                    return;
+                }
+
+                _lastWarehouseImportError = null;
+                if (!report.Disabled && (report.FilledFacts > 0 || report.Issues.Count > 0))
+                {
+                    // Постоянное окно отчёта: что пришло и что потерялось.
+                    WarehouseArrivalNotifier.Show(report);
+                    if (report.FilledFacts > 0)
+                    {
+                        Application.Current?.Dispatcher.BeginInvoke(NotificationCenter.NotifyDataChanged);
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                // Ошибка импорта не должна ронять общий таймер уведомлений.
+                ErrorLog.Append("warehouse", exception);
             }
         });
         worker.SetApartmentState(ApartmentState.STA);
@@ -320,6 +376,7 @@ public partial class MainViewModel : ObservableObject
         NavItems.Add(NavigationItem.For(AppPage.QuoteBase, "База квот", "\uE8FD"));
         NavItems.Add(NavigationItem.For(AppPage.CompelParser, "Компэл Парсер", "\uE8C5"));
         NavItems.Add(NavigationItem.For(AppPage.PriceSearch, "Поиск цен", "\uE721"));
+        NavItems.Add(NavigationItem.For(AppPage.CrossReference, "Поиск аналогов", "\uE71B"));
         NavItems.Add(NavigationItem.Divider());
         NavItems.Add(NavigationItem.For(AppPage.Instructions, "Инструкции", "\uE82D"));
         NavItems.Add(NavigationItem.For(AppPage.Settings, "Настройки", "\uE713"));

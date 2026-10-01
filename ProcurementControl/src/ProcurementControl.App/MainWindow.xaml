@@ -131,15 +131,6 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Подсказка внизу (аналог navHint) -->
-                <TextBlock DockPanel.Dock="Bottom"
-                           Text="Данные закупки хранятся внутри папки приложения."
-                           FontSize="11"
-                           Foreground="{StaticResource NavMutedBrush}"
-                           TextWrapping="Wrap"
-                           VerticalAlignment="Bottom"
-                           Margin="16,0,16,14"/>
-
                 <!-- Список разделов -->
                 <ListBox ItemsSource="{Binding NavItems}"
                          SelectedItem="{Binding SelectedNavItem, Mode=TwoWay}"
@@ -148,7 +139,12 @@
                          Background="Transparent"
                          BorderThickness="0"
                          Margin="8,0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Resources>
+                        <!-- Тонкий скроллбар в палитре навигации (появился из-за выросшего списка разделов). -->
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimScrollBarStyle}"/>
+                    </ListBox.Resources>
+                </ListBox>
             </DockPanel>
         </Border>
 

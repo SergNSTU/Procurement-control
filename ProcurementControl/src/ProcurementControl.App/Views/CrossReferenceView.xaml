@@ -1,0 +1,63 @@
+<UserControl x:Class="ProcurementControl.Views.CrossReferenceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ProcurementControl.Views"
+             Background="{StaticResource CanvasBrush}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Тулбар: MPN, фильтр наличия, поиск -->
+        <WrapPanel Grid.Row="0" Style="{StaticResource ToolbarWrapStyle}">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="MPN:" Margin="0,0,6,0"/>
+            <TextBox Width="240" Margin="0,0,14,0"
+                     Text="{Binding MpnText, UpdateSourceTrigger=PropertyChanged}"/>
+            <CheckBox Content="Только в наличии" VerticalAlignment="Center"
+                      IsChecked="{Binding InStockOnly}" Margin="0,0,14,0"/>
+            <Button Content="Найти аналоги"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Command="{Binding SearchCommand}"
+                    IsDefault="True"
+                    Width="130" Height="32"/>
+        </WrapPanel>
+
+        <!-- Сетка результатов: двойной клик открывает карточку на lcsc.com -->
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="0" Margin="0,12,0,0">
+            <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
+                <DataGrid x:Name="ResultGrid"
+                          ItemsSource="{Binding Rows}"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          BorderThickness="0"
+                          MouseDoubleClick="ResultGrid_MouseDoubleClick">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="120"/>
+                        <DataGridTextColumn Header="MPN" Binding="{Binding Mpn}" Width="160"/>
+                        <DataGridTextColumn Header="Код LCSC" Binding="{Binding LcscCode}" Width="90"/>
+                        <DataGridTextColumn Header="Производитель" Binding="{Binding Brand}" Width="140"/>
+                        <DataGridTextColumn Header="Корпус" Binding="{Binding Package}" Width="120"/>
+                        <DataGridTextColumn Header="Категория" Binding="{Binding Category}" Width="170"/>
+                        <DataGridTextColumn Header="Запас" Binding="{Binding Stock}" Width="90"/>
+                        <DataGridTextColumn Header="MOQ" Binding="{Binding Moq}" Width="70"/>
+                        <DataGridTextColumn Header="Цена, USD" Binding="{Binding PriceText}" Width="200"/>
+                        <DataGridTextColumn Header="Описание" Binding="{Binding Description}" Width="280"/>
+                        <DataGridTextColumn Header="Datasheet" Binding="{Binding Datasheet}" Width="260"/>
+                        <DataGridTextColumn Header="Ссылка" Binding="{Binding Link}" Width="280"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+        </Border>
+
+        <!-- Нижняя строка: статус и ошибки -->
+        <StackPanel Grid.Row="2" Margin="0,8,0,0">
+            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedBrush}" FontSize="12"/>
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource DangerTextBrush}" FontSize="12"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

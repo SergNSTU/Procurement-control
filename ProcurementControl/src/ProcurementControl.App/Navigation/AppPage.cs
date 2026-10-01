@@ -16,6 +16,7 @@ public enum AppPage
     QuoteBase,
     CompelParser,
     PriceSearch,
+    CrossReference,
     Instructions,
     Settings,
     Notes,

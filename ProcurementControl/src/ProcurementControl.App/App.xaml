@@ -45,6 +45,9 @@
             <DataTemplate DataType="{x:Type vm:PriceSearchViewModel}">
                 <views:PriceSearchView/>
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:CrossReferenceViewModel}">
+                <views:CrossReferenceView/>
+            </DataTemplate>
             <DataTemplate DataType="{x:Type vm:ExcelCompareViewModel}">
                 <views:ExcelCompareView/>
             </DataTemplate>
