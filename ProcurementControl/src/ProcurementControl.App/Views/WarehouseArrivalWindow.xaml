@@ -1,0 +1,109 @@
+<Window x:Class="ProcurementControl.Views.WarehouseArrivalWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="600"
+        SizeToContent="Height"
+        MaxHeight="640"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        ShowActivated="True"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <!-- Отчёт по файлу прихода со склада: замечания + «пушнуть» поставщика -->
+    <Border Background="{StaticResource SurfaceBrush}"
+            BorderBrush="{StaticResource LineBrush}"
+            BorderThickness="1"
+            CornerRadius="14"
+            MouseLeftButtonDown="BorderDragMove">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="70"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Шапка: иконка коробки, заголовок, крестик -->
+            <Grid Grid.Row="0">
+                <Border Width="54" Height="54"
+                        HorizontalAlignment="Left" VerticalAlignment="Top"
+                        Margin="20,18,0,0"
+                        Background="#FFF7ED" CornerRadius="10">
+                    <TextBlock Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"
+                               FontSize="26"
+                               Foreground="#EA580C"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Margin="92,21,60,0" VerticalAlignment="Top" HorizontalAlignment="Left">
+                    <TextBlock Text="Приход со склада (CE CT WE)"
+                               FontFamily="Segoe UI Semibold" FontSize="14" FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock x:Name="FileText" Text=""
+                               Margin="0,2,0,0" FontSize="11"
+                               Foreground="{StaticResource MutedBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <Button Content="×"
+                        Width="28" Height="28"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,15,18,0"
+                        FontSize="14" Foreground="{StaticResource MutedBrush}"
+                        Background="Transparent" BorderThickness="0"
+                        Cursor="Hand"
+                        Click="CloseClicked"/>
+                <Rectangle Grid.Row="0" Height="1" Fill="{StaticResource LineBrush}"
+                           VerticalAlignment="Bottom" Margin="20,0,20,0"/>
+            </Grid>
+
+            <!-- Сводка + список замечаний -->
+            <StackPanel Grid.Row="1" Margin="20,12,20,0">
+                <TextBlock x:Name="SummaryText" Text=""
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource TextBrush}"
+                           FontSize="12" LineHeight="19"/>
+            </StackPanel>
+
+            <ListBox x:Name="IssuesList" Grid.Row="2"
+                     Margin="20,10,20,0"
+                     MaxHeight="380"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     Visibility="Collapsed">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="8,5"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" LineHeight="18"/>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- Кнопки: черновик письма поставщику по выбранной строке + ОК -->
+            <Grid Grid.Row="3" Margin="16,14,16,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="PushButton" Content="Пушнуть поставщика (черновик)"
+                        Style="{StaticResource SecondaryButtonStyle}"
+                        Height="32" HorizontalAlignment="Left" Padding="12,0"
+                        Visibility="Collapsed"
+                        ToolTip="Создать черновик письма поставщику по выбранной строке (письмо откроется, но не отправится)"
+                        Click="PushClicked"/>
+                <Button Grid.Column="1" Content="ОК"
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        Width="90" Height="32"
+                        Click="OkClicked"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

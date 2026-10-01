@@ -131,6 +131,12 @@
                       VerticalAlignment="Center"
                       Margin="14,0,0,0"
                       ToolTip="Смотреть ящик comp@npkexpert.ru: письма поставщиков с номером активной сделки и Excel-вложением попадают в документы сделки как RRFQ"/>
+            <!-- Авто-сверка файла прихода со склада (письма «CE CT WE daily update») -->
+            <CheckBox Content="Импорт приходов со склада"
+                      IsChecked="{Binding WarehouseImportEnabled, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      Margin="14,0,0,0"
+                      ToolTip="Раз в 2 часа забирать файл прихода на склад из папки «CE CT WE»: сверять заказы из комментариев поставщиков, заполнять «Факт поступл.», предупреждать о просрочках"/>
             <Button Content="Новая сделка"
                     Style="{StaticResource PrimaryButtonStyle}"
                     Command="{Binding NewDealCommand}"
@@ -148,6 +154,7 @@
                         <MenuItem Header="Удалить сделку" Command="{Binding DeleteDealCommand}"/>
                         <Separator/>
                         <MenuItem Header="Проверить почту поставщиков" Command="{Binding CheckMailCommand}"/>
+                        <MenuItem Header="Проверить приход со склада" Command="{Binding CheckWarehouseCommand}"/>
                         <MenuItem Header="Обновить список" Command="{Binding ReloadCommand}"/>
                     </ContextMenu>
                 </Button.ContextMenu>

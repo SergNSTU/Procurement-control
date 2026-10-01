@@ -124,6 +124,16 @@ public partial class PurchaseViewModel : ObservableObject
 
     partial void OnMailImportEnabledChanged(bool value) => OutlookMailImportService.IsEnabled = value;
 
+    /// <summary>
+    /// Авто-импорт файла прихода со склада (письма «CE CT WE daily update»,
+    /// раз в 2 часа): сверка заказов из комментариев поставщиков, «Факт
+    /// поступл.», предупреждения о просрочках.
+    /// </summary>
+    [ObservableProperty]
+    private bool _warehouseImportEnabled = WarehouseArrivalImportService.IsEnabled;
+
+    partial void OnWarehouseImportEnabledChanged(bool value) => WarehouseArrivalImportService.IsEnabled = value;
+
     public IReadOnlyList<FilterOption> Filters { get; } =
         Enum.GetValues<DealFilter>().Select(f => new FilterOption(f, f.Label())).ToList();
 
@@ -219,9 +229,70 @@ public partial class PurchaseViewModel : ObservableObject
         worker.Start();
     }
 
-    private void HandleMailReport(MailImportReport report)
+    /// <summary>
+    /// Ручная проверка файла прихода со склада без ожидания двухчасового
+    /// таймера. STA-поток — как в CheckMail: Outlook и Excel Object Model
+    /// требуют STA, иначе замораживают окно.
+    /// </summary>
+    [RelayCommand]
+    private void CheckWarehouse()
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        var worker = new Thread(() =>
+        {
+            var report = WarehouseArrivalImportService.Check(manual: true);
+            if (dispatcher is null || dispatcher.CheckAccess())
+            {
+                HandleWarehouseReport(report);
+            }
+            else
+            {
+                dispatcher.Invoke(() => HandleWarehouseReport(report));
+            }
+        });
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.IsBackground = true;
+        worker.Start();
+    }
+
+    private void HandleWarehouseReport(WarehouseArrivalReport report)
     {
         try
+        {
+            if (report.Error is not null)
+            {
+                ToastService.Show("Приход со склада: " + report.Error, ToastKind.Warn);
+                return;
+            }
+
+            if (report.Disabled)
+            {
+                ToastService.Show("Импорт приходов выключен — включите галочку «Импорт приходов со склада»",
+                    ToastKind.Info);
+                return;
+            }
+
+            if (report.FileSubject is null)
+            {
+                ToastService.Show("Новых файлов прихода «CE CT WE» в почте нет", ToastKind.Info);
+                return;
+            }
+
+            // Отчёт всегда показываем окном: там и сводка, и замечания.
+            WarehouseArrivalNotifier.Show(report);
+            if (report.FilledFacts > 0)
+            {
+                NotificationCenter.NotifyDataChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Приход со склада");
+        }
+    }
+
+    private void HandleMailReport(MailImportReport report)
+    {        try
         {
             if (report.Error is not null)
             {
@@ -907,7 +978,7 @@ public partial class PurchaseViewModel : ObservableObject
     /// <summary>
     /// Шаг 1 конвейера: исходник берётся из задачи Bitrix, связанной со сделкой
     /// (файлы задачи, чек-листа и комментариев; REST + вебхук из настроек Bitrix).
-    /// Скачанный файл идёт в ту же подготовку, что и ручной выбор.
+    /// Найденный RFQ прикрепляется к документам сделки как есть, без пересборки.
     /// </summary>
     [RelayCommand]
     private async Task LoadRfqFromBitrixAsync()
@@ -1037,11 +1108,60 @@ public partial class PurchaseViewModel : ObservableObject
                 ProgressService.End();
             }
 
-            StartRfqPrepare(localPath, dealId, dealNumber, client);
+            StoreBitrixRfqAsIs(localPath, dealId, dealNumber, client);
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "RFQ из Bitrix");
+        }
+    }
+
+    /// <summary>
+    /// Скачанный из Bitrix RFQ идёт в документы сделки как есть — без чтения,
+    /// пересборки и списка «Для Компэла»; дальше — предложение разослать файл.
+    /// </summary>
+    private void StoreBitrixRfqAsIs(string sourcePath, long dealId, string dealNumber, string client)
+    {
+        try
+        {
+            var storedRfq = PurchaseDocumentsStore.AddDocument(dealId, 0, "RFQ", sourcePath, folderName: "RFQ");
+            LoadDocuments();
+
+            if (Suppliers.Count == 0)
+            {
+                // Поставщиков можно завести позже: повторное нажатие предложит
+                // разослать готовый файл без пересборки.
+                StatusText = "RFQ из Bitrix прикреплён к сделке; для рассылки добавьте поставщиков";
+                MessageBox.Show(
+                    "RFQ из Bitrix прикреплён к сделке как есть.\r\n\r\n" +
+                    "Чтобы разослать: добавьте поставщиков сделки и снова нажмите\r\n" +
+                    "«RFQ поставщикам» — приложение предложит отправить готовый файл.",
+                    "RFQ из Bitrix");
+                return;
+            }
+
+            var sendWindow = new RfqSendWindow(dealNumber, client, Suppliers.ToList(), new[] { storedRfq })
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (sendWindow.ShowDialog() == true)
+            {
+                StatusText = "RFQ прикреплён, черновиков: " + sendWindow.CreatedDrafts;
+                ToastService.Show("Черновиков создано: " + sendWindow.CreatedDrafts, ToastKind.Success);
+            }
+            else
+            {
+                StatusText = "RFQ из Bitrix прикреплён к сделке";
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "RFQ из Bitrix");
+        }
+        finally
+        {
+            // Хранилище документов держит свою копию — временная папка не нужна.
+            try { Directory.Delete(Path.GetDirectoryName(sourcePath)!, recursive: true); } catch { }
         }
     }
 

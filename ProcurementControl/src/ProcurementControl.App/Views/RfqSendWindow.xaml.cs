@@ -148,7 +148,7 @@ public partial class RfqSendWindow : Window
                         .Replace("{Deal}", _dealNumber)
                         .Replace("{Client}", string.IsNullOrWhiteSpace(_client) ? "—" : _client)
                         .Replace("{Supplier}", target.Supplier);
-                    OutlookService.CreateMailDraft(target.Email.Trim(), _dealNumber, body, _attachments);
+                    OutlookService.CreateSupplierRfqDraft(target.Email.Trim(), _dealNumber, body, _attachments);
                     created++;
                 }
 
