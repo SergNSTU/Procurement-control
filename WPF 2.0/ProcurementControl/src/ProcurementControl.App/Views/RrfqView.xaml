@@ -27,7 +27,10 @@
             <!-- 1. Выбор файла (строки 998-1086) -->
             <Border Grid.Column="0" Style="{StaticResource CardStyle}" MinWidth="0">
                 <DockPanel LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionTitle}" Text="1. Выбор файла" Margin="0,0,0,8"/>
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="1. Выбор файла"/>
+                        <TextBlock Text="{Binding DealContextText}" Foreground="{StaticResource NavAccentBrush}" FontSize="12"/>
+                    </StackPanel>
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="36"/>

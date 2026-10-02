@@ -14,7 +14,7 @@ public sealed class DueEntry
 
     public DateTime Date { get; set; }
 
-    /// <summary>Текст даты для ключа состояния (yyyy-MM-dd).</summary>
+    /// <summary>Текст даты для ключа состояния: yyyy-MM-dd или yyyy-MM-dd HH:mm, если задано время.</summary>
     public string DateText { get; set; } = string.Empty;
 }
 

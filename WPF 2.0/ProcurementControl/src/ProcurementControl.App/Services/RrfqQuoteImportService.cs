@@ -23,6 +23,10 @@ public static class RrfqQuoteImportService
     public static int SaveQuotes(IReadOnlyList<Quote> quotes, IEnumerable<string> paths, string comment)
         => PurchaseWriteRepository.SaveQuoteHistory(quotes, string.Join("; ", paths), comment);
 
+    public static QuoteImportSaveResult SaveQuotesForDeal(IReadOnlyList<Quote> quotes, IEnumerable<string> paths,
+        string comment, long dealId, string dealNumber)
+        => PurchaseWriteRepository.SaveQuoteHistoryForDeal(quotes, string.Join("; ", paths), comment, dealId, dealNumber);
+
     private static T RunSta<T>(Func<T> action)
     {
         T? result = default;

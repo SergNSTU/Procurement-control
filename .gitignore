@@ -19,3 +19,11 @@ app/*.before_*.bak
 *.swp
 Thumbs.db
 Desktop.ini
+
+# Local tool cache and generated artifacts
+.tools/
+output/
+reports/
+nul
+tmp/**/bin/
+tmp/**/obj/

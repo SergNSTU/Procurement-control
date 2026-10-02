@@ -19,6 +19,7 @@ namespace ProcurementControl.ViewModels;
 public partial class RrfqViewModel : ObservableObject
 {
     private RrfqAnalysis? _analysis;
+    private RrfqDealComparisonContext? _dealContext;
 
     [ObservableProperty]
     private string _rfqPath = string.Empty;
@@ -43,6 +44,9 @@ public partial class RrfqViewModel : ObservableObject
 
     [ObservableProperty]
     private string _lastResultPath = string.Empty;
+
+    [ObservableProperty]
+    private string _dealContextText = string.Empty;
 
     [ObservableProperty]
     private Decision? _selectedDecision;
@@ -104,6 +108,7 @@ public partial class RrfqViewModel : ObservableObject
         };
         if (dialog.ShowDialog() == true)
         {
+            ClearDealContextForManualEdit();
             RfqPath = dialog.FileName;
         }
     }
@@ -121,6 +126,8 @@ public partial class RrfqViewModel : ObservableObject
         {
             return;
         }
+
+        ClearDealContextForManualEdit();
 
         foreach (var file in dialog.FileNames)
         {
@@ -196,7 +203,8 @@ public partial class RrfqViewModel : ObservableObject
                     CanSaveResult = true;
                     SaveResultCommand.NotifyCanExecuteChanged();
                     OpenManualMatchCommand.NotifyCanExecuteChanged();
-                });
+                },
+                progressText: "Сравнение RRFQ: анализ Excel-файлов…");
         }
         catch (Exception ex)
         {
@@ -236,16 +244,19 @@ public partial class RrfqViewModel : ObservableObject
                     try
                     {
                         LastResultPath = path;
-                        var snapshot = PurchaseWriteRepository.SaveAnalysisSnapshot(analysis, path);
+                        var snapshot = SaveSnapshotForCurrentContext(analysis, path);
                         LogText += "\r\nГотово: " + path;
-                        var action = snapshot.IsDuplicate ? "Когорта обновлена" : "Когорта сохранена";
-                        MessageBox.Show("Готово.\r\n" + path + $"\r\n{action}. Квот: {snapshot.SavedQuotes}", "RRFQ создан");
+                        var action = _dealContext is null
+                            ? (snapshot.IsDuplicate ? "Когорта обновлена" : "Когорта сохранена") + $". Квот: {snapshot.SavedQuotes}"
+                            : "Сводный RRFQ прикреплён к сделке. В аналитике учитываются только отдельные RRFQ поставщиков.";
+                        MessageBox.Show("Готово.\r\n" + path + "\r\n" + action, "RRFQ создан");
                     }
                     catch (Exception saveError)
                     {
                         MessageBox.Show("Результат создан, но статистику сохранить не удалось:\r\n" + saveError.Message, "Сохранение статистики");
                     }
-                });
+                },
+                progressText: "RRFQ: создание результирующего файла (Excel)…");
         }
         catch (Exception ex)
         {
@@ -306,7 +317,8 @@ public partial class RrfqViewModel : ObservableObject
                     {
                         MessageBox.Show("Файл прочитан, но импортировать квоты не удалось:\r\n" + saveError.Message, "Импорт квот");
                     }
-                });
+                },
+                progressText: "RRFQ: чтение квот из результирующего файла…");
         }
         catch (Exception ex)
         {
@@ -556,11 +568,18 @@ public partial class RrfqViewModel : ObservableObject
 
     /// <summary>
     /// Выполняет работу в отдельном STA-потоке (нужен для Excel COM) и
-    /// возвращает результат или ошибку в поток интерфейса.
+    /// возвращает результат или ошибку в поток интерфейса. Пока работа идёт,
+    /// в статусной строке главного окна показывается прогресс с текстом
+    /// <paramref name="progressText"/> (если задан).
     /// </summary>
-    private void StartStaJob(Func<object?> work, Action<Exception?, object?> completed)
+    private void StartStaJob(Func<object?> work, Action<Exception?, object?> completed, string? progressText = null)
     {
         var dispatcher = Application.Current?.Dispatcher;
+        if (progressText is not null)
+        {
+            ProgressService.Begin(progressText);
+        }
+
         var thread = new Thread(() =>
         {
             Exception? error = null;
@@ -575,6 +594,11 @@ public partial class RrfqViewModel : ObservableObject
             }
             finally
             {
+                if (progressText is not null)
+                {
+                    ProgressService.End();
+                }
+
                 if (dispatcher is not null)
                 {
                     dispatcher.Invoke(() => completed(error, result));
@@ -593,12 +617,85 @@ public partial class RrfqViewModel : ObservableObject
     public RrfqViewModel()
     {
         RrfqImportQueue.Added += AddQueuedSupplier;
+        RrfqImportQueue.DealComparisonRequested += OpenDealComparison;
         foreach (var item in RrfqImportQueue.TakePending()) AddQueuedSupplier(item.Path, item.Supplier);
+        var context = RrfqImportQueue.TakePendingDealComparison();
+        if (context is not null) OpenDealComparison(context);
     }
 
     private void AddQueuedSupplier(string path, string supplier)
     {
         if (!Suppliers.Any(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)))
             Suppliers.Add(new SupplierFileEntry { Path = path, Supplier = supplier });
+    }
+
+    private bool OpenDealComparison(RrfqDealComparisonContext context)
+    {
+        if (IsBusy)
+        {
+            MessageBox.Show("Нельзя заменить состав сравнения, пока выполняется расчёт.", "Свести RRFQ");
+            return false;
+        }
+        if (!string.IsNullOrWhiteSpace(RfqPath) || Suppliers.Count > 0 || _analysis is not null)
+        {
+            var answer = MessageBox.Show("Заменить текущее сравнение документами сделки " + context.DealNumber +
+                "? Несохранённый preview будет сброшен.", "Свести RRFQ", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return false;
+        }
+
+        RfqPath = context.RfqPath;
+        Suppliers.Clear();
+        foreach (var source in context.SupplierDocuments)
+            Suppliers.Add(new SupplierFileEntry { Path = source.Path, Supplier = source.Supplier });
+        _analysis = null;
+        PreviewRows.Clear();
+        QuoteDetails.Clear();
+        CanSaveResult = false;
+        _dealContext = context;
+        DealContextText = "Сделка: " + context.DealNumber;
+        LogText = "Загружены документы сделки " + context.DealNumber + ". Выполните preview и проверьте сопоставление.";
+        return true;
+    }
+
+    private AnalysisSaveResult SaveSnapshotForCurrentContext(RrfqAnalysis analysis, string resultPath)
+    {
+        if (_dealContext is null) return PurchaseWriteRepository.SaveAnalysisSnapshot(analysis, resultPath);
+
+        long newDocumentId = 0;
+        var snapshotSaved = false;
+        try
+        {
+            var attachedPath = PurchaseDocumentsStore.AddDocument(_dealContext.DealId, 0, "Сводный RRFQ", resultPath, "Сводный RRFQ");
+            newDocumentId = PurchaseDocumentsStore.GetNewestDocumentId(_dealContext.DealId, "Сводный RRFQ", Path.GetFileName(resultPath));
+            if (newDocumentId <= 0) throw new InvalidOperationException("Не удалось прикрепить сводный RRFQ к сделке.");
+            var saved = PurchaseWriteRepository.SaveDealAnalysisSnapshot(analysis, attachedPath, _dealContext.DealId,
+                _dealContext.DealNumber, newDocumentId);
+            snapshotSaved = true;
+            if (saved.PreviousSummaryDocumentId > 0 && saved.PreviousSummaryDocumentId != newDocumentId)
+            {
+                try { PurchaseDocumentsStore.DeleteDocument(saved.PreviousSummaryDocumentId); }
+                catch (Exception ex)
+                {
+                    LogText += "\r\nСводный RRFQ создан, но прежний файл не удалось перенести в корзину: " + ex.Message;
+                }
+            }
+            return saved;
+        }
+        catch
+        {
+            if (!snapshotSaved && newDocumentId > 0)
+            {
+                try { PurchaseDocumentsStore.DeleteDocument(newDocumentId); } catch { }
+            }
+            throw;
+        }
+    }
+
+    private void ClearDealContextForManualEdit()
+    {
+        if (_dealContext is null) return;
+        _dealContext = null;
+        DealContextText = string.Empty;
+        LogText = "Ручной выбор файлов: сравнение будет сохранено отдельно от сделки.";
     }
 }

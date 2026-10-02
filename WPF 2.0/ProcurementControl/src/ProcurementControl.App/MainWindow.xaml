@@ -131,15 +131,6 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Подсказка внизу (аналог navHint) -->
-                <TextBlock DockPanel.Dock="Bottom"
-                           Text="Данные закупки хранятся внутри папки приложения."
-                           FontSize="11"
-                           Foreground="{StaticResource NavMutedBrush}"
-                           TextWrapping="Wrap"
-                           VerticalAlignment="Bottom"
-                           Margin="16,0,16,14"/>
-
                 <!-- Список разделов -->
                 <ListBox ItemsSource="{Binding NavItems}"
                          SelectedItem="{Binding SelectedNavItem, Mode=TwoWay}"
@@ -148,7 +139,12 @@
                          Background="Transparent"
                          BorderThickness="0"
                          Margin="8,0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Resources>
+                        <!-- Тонкий скроллбар в палитре навигации (появился из-за выросшего списка разделов). -->
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource SlimScrollBarStyle}"/>
+                    </ListBox.Resources>
+                </ListBox>
             </DockPanel>
         </Border>
 
@@ -158,6 +154,24 @@
 
         <!-- Правая область: заголовок раздела + кнопки окна + активная страница -->
         <DockPanel Grid.Column="1">
+            <!-- Статусная строка долгих операций (ProgressService): видна только во время работы -->
+            <Border x:Name="ProgressPanel" DockPanel.Dock="Bottom"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0"
+                    Padding="18,7,18,7" Visibility="Collapsed">
+                <DockPanel>
+                    <ProgressBar x:Name="ActivityIndicator" DockPanel.Dock="Right"
+                                 Width="180" Height="6" VerticalAlignment="Center"
+                                 Margin="14,0,0,0" BorderThickness="0"
+                                 Foreground="{StaticResource PrimaryBrush}"
+                                 Background="{StaticResource LineBrush}"/>
+                    <TextBlock x:Name="ActivityText"
+                               FontSize="12" VerticalAlignment="Center"
+                               Foreground="{StaticResource MutedBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+            </Border>
+
             <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1"
                     Padding="18,12,0,12">

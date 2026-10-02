@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ProcurementControl.Models;
@@ -11,83 +10,102 @@ using ProcurementControl.Services;
 namespace ProcurementControl.ViewModels;
 
 /// <summary>
-/// Страница «Bitrix API Test» — перенос $bitrixPage (RRFQComparer.ps1,
-/// строки 306-518). Интеграция по умолчанию отключена, как и в оригинале
-/// (строка 1385): включается чекбоксом только на текущий сеанс.
+/// Страница «Bitrix API Test» — контрольная панель автоимпорта сделок из
+/// проекта Bitrix «Заявка на расчет КС в РФ» в «Контроль закупки». Сам импорт
+/// выполняет BitrixImportService по общему таймеру приложения; здесь —
+/// переключатель, ручная проверка и список уже импортированных сделок.
 /// </summary>
 public partial class BitrixViewModel : ObservableObject
 {
-    private readonly DispatcherTimer _autoRefreshTimer;
     private BitrixConfig? _config;
 
+    /// <summary>Автоимпорт включён (настройка bitrix.import.enabled, по умолчанию — да).</summary>
     [ObservableProperty]
-    private bool _integrationEnabled;
+    private bool _autoImportEnabled = BitrixImportService.IsEnabled;
 
     [ObservableProperty]
     private string _statusText = string.Empty;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CheckNowCommand))]
     private bool _isLoading;
 
     [ObservableProperty]
-    private BitrixTaskRow? _selectedTask;
+    private BitrixImportRow? _selectedRow;
 
-    public ObservableCollection<BitrixTaskRow> Tasks { get; } = new();
+    public ObservableCollection<BitrixImportRow> Rows { get; } = new();
 
     public BitrixViewModel()
     {
-        // Автообновление каждые 30 минут (аналог $bitrixTimer).
-        _autoRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(30) };
-        _autoRefreshTimer.Tick += (_, _) =>
-        {
-            if (IntegrationEnabled && !IsLoading)
-            {
-                _ = RefreshAsync();
-            }
-        };
+        Reload();
+        StatusText = AutoImportEnabled
+            ? "Автоимпорт включён: проверка раз в 10 минут."
+            : "Автоимпорт выключен.";
     }
 
-    partial void OnIntegrationEnabledChanged(bool value)
+    partial void OnAutoImportEnabledChanged(bool value)
     {
-        RefreshCommand.NotifyCanExecuteChanged();
-        if (value)
+        BitrixImportService.IsEnabled = value;
+        StatusText = value
+            ? "Автоимпорт включён: проверка раз в 10 минут."
+            : "Автоимпорт выключен.";
+    }
+
+    /// <summary>Перечитывает импортированные сделки из базы (без похода в сеть).</summary>
+    [RelayCommand]
+    private void Reload()
+    {
+        Rows.Clear();
+        foreach (var row in BitrixImportService.GetImportedRows())
         {
-            StatusText = "Подтягивание из Bitrix включено. Нажмите кнопку обновления.";
-            _autoRefreshTimer.Start();
-        }
-        else
-        {
-            _autoRefreshTimer.Stop();
-            Tasks.Clear();
-            StatusText = "Подтягивание из Bitrix отключено.";
+            Rows.Add(row);
         }
     }
 
-    /// <summary>Аналог $btnBitrixRefresh.Add_Click.</summary>
-    [RelayCommand(CanExecute = nameof(CanRefresh))]
-    private async Task RefreshAsync()
+    /// <summary>Ручная проверка проекта Bitrix без ожидания автопроверки.</summary>
+    [RelayCommand(CanExecute = nameof(CanCheckNow))]
+    private async Task CheckNowAsync()
     {
-        if (!IntegrationEnabled)
-        {
-            StatusText = "Подтягивание из Bitrix отключено.";
-            return;
-        }
-
         IsLoading = true;
-        StatusText = "Загрузка...";
-        Tasks.Clear();
+        StatusText = "Проверка проекта Bitrix...";
         try
         {
             _config = BitrixRepository.GetConfig();
-            var blocked = BitrixRepository.GetBlockedTaskIds();
-            var rows = await BitrixService.GetTasksAsync(_config, blocked);
-            foreach (var row in rows)
+            var report = await BitrixImportService.SyncAsync(manual: true);
+            if (report.Error is not null)
             {
-                Tasks.Add(row);
+                StatusText = "Ошибка: " + report.Error;
+                ToastService.Show("Импорт из Bitrix: " + report.Error, ToastKind.Warn);
+                return;
             }
 
-            StatusText = $"Задач: {Tasks.Count} в работе";
+            if (report.Initialized)
+            {
+                StatusText = "Точка отсчёта установлена: задачи, созданные до этого момента, не импортируются.";
+                ToastService.Show(StatusText, ToastKind.Info);
+            }
+            else
+            {
+                var skippedNote = report.PendingSkippedCount > 0
+                    ? "; не распознано: " + report.PendingSkippedCount
+                    : string.Empty;
+                StatusText = "Импортировано сделок: " + report.Imported.Count
+                    + "; уже были: " + report.AlreadyPresent + skippedNote;
+                if (report.Skipped.Count > 0)
+                {
+                    StatusText += "\nНе распознаны (исправьте название в Bitrix): " + string.Join("; ", report.Skipped);
+                }
+            }
+
+            if (report.Imported.Count > 0)
+            {
+                ToastService.Show(
+                    "Импорт из Bitrix (" + report.Imported.Count + "):\n" + string.Join("\n", report.Imported),
+                    ToastKind.Success);
+                NotificationCenter.NotifyDataChanged();
+            }
+
+            Reload();
         }
         catch (Exception ex)
         {
@@ -99,19 +117,19 @@ public partial class BitrixViewModel : ObservableObject
         }
     }
 
-    private bool CanRefresh() => IntegrationEnabled && !IsLoading;
+    private bool CanCheckNow() => !IsLoading;
 
-    /// <summary>Аналог $bitrixCopyDealNumberMenuItem: номер до первого '/'.</summary>
+    /// <summary>Номер сделки (до первого '/') в буфер обмена — как в оригинале вкладки.</summary>
     [RelayCommand]
     private void CopyNumber()
     {
-        var task = SelectedTask;
-        if (task is null)
+        var row = SelectedRow;
+        if (row is null)
         {
             return;
         }
 
-        var match = Regex.Match(task.Title, "^\\s*([^/]+)");
+        var match = Regex.Match(row.DealNumber, "^\\s*([^/]+)");
         if (!match.Success)
         {
             return;
@@ -127,50 +145,23 @@ public partial class BitrixViewModel : ObservableObject
         }
     }
 
-    /// <summary>Аналог $bitrixBlockTaskMenuItem: подтверждение и блокировка.</summary>
-    [RelayCommand]
-    private void BlockTask()
-    {
-        var task = SelectedTask;
-        if (task is null || task.TaskId <= 0)
-        {
-            return;
-        }
-
-        var answer = MessageBox.Show(
-            $"Заблокировать задачу ID {task.TaskId}?", "Bitrix",
-            MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        try
-        {
-            BitrixRepository.BlockTask(task.TaskId, task.Title);
-            Tasks.Remove(task);
-        }
-        catch (Exception ex)
-        {
-            StatusText = "Ошибка: " + ex.Message;
-        }
-    }
-
-    /// <summary>Аналог $bitrixGrid.Add_CellDoubleClick: открыть ссылку в браузере.</summary>
+    /// <summary>Открыть задачу в Bitrix.</summary>
     [RelayCommand]
     private void OpenLink()
     {
-        var task = SelectedTask;
-        if (task is null || task.TaskId <= 0)
+        var row = SelectedRow;
+        if (row is null || row.TaskId <= 0)
         {
             return;
         }
 
         var config = _config ?? BitrixRepository.GetConfig();
-        var url = BitrixService.GetTaskViewUrl(config, task.TaskId);
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(BitrixService.GetTaskViewUrl(config, row.TaskId))
+            {
+                UseShellExecute = true,
+            });
         }
         catch (Exception ex)
         {

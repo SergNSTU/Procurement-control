@@ -47,6 +47,30 @@ public partial class SettingsViewModel : ObservableObject
         get => $"Хоткеи: {QuickCaptureService.HotkeyMode}+T (задача) / {QuickCaptureService.HotkeyMode}+R (напоминание)";
     }
 
+    /// <summary>Версия сборки для страницы «Настройки»: номер из csproj + дата публикации.</summary>
+    public string AppVersion { get; } = BuildAppVersion();
+
+    private static string BuildAppVersion()
+    {
+        var assembly = typeof(SettingsViewModel).Assembly;
+        var version = assembly.GetName().Version;
+        var number = version is null ? "?" : version.ToString(3);
+        try
+        {
+            var built = File.GetLastWriteTime(assembly.Location);
+            if (built.Year > 2000)
+            {
+                return $"Версия {number} (сборка {built:dd.MM.yyyy HH:mm})";
+            }
+        }
+        catch
+        {
+            // Путь к сборке может быть недоступен — покажем только номер.
+        }
+
+        return "Версия " + number;
+    }
+
     public SettingsViewModel()
     {
         Load();
@@ -138,8 +162,9 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Аналог $btnRestoreRecovery (RRFQComparer.ps1, строки 5789-5821), только для корзины:
-    /// восстановление из полной копии в порт не входит.
+    /// Аналог $btnRestoreRecovery (RRFQComparer.ps1, строки 5789-5821) для корзины.
+    /// Для полных копий — восстановление через RecoveryStore.StageRestore: архив
+    /// распаковывается сразу, замена данных происходит при следующем запуске.
     /// </summary>
     [RelayCommand]
     private void RestoreSelected()
@@ -151,18 +176,32 @@ public partial class SettingsViewModel : ObservableObject
                 throw new InvalidOperationException("Выберите резервную копию или запись в корзине.");
             }
 
-            if (SelectedRecoveryRow.RecoveryType != "Trash")
+            if (SelectedRecoveryRow.RecoveryType == "Backup")
             {
+                var answer = MessageBox.Show(
+                    "Заменить текущие данные (база закупок, файлы документов, заметки)\r\n" +
+                    "содержимым копии от " + SelectedRecoveryRow.CreatedText + " (" + SelectedRecoveryRow.Reason + ")?\r\n\r\n" +
+                    "Перед заменой будет создана страховочная копия текущих данных.\r\n" +
+                    "После подтверждения приложение закроется, а восстановление\r\n" +
+                    "выполнится при следующем запуске.",
+                    "Восстановление данных", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (answer != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                RecoveryStore.StageRestore(SelectedRecoveryRow.SnapshotPath);
                 MessageBox.Show(
-                    "Восстановление из полного архива не перенесено в эту версию.\r\nИз корзины записи восстанавливаются.",
+                    "Копия подготовлена. Приложение будет закрыто.\r\nПри следующем запуске данные будут восстановлены.",
                     "Восстановление данных");
+                Application.Current.Shutdown();
                 return;
             }
 
-            var answer = MessageBox.Show(
+            var answerTrash = MessageBox.Show(
                 "Восстановить удалённую запись и её файлы из корзины?",
                 "Восстановление данных", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (answer != MessageBoxResult.Yes)
+            if (answerTrash != MessageBoxResult.Yes)
             {
                 return;
             }
@@ -173,6 +212,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            ErrorLog.Append("restore", ex);
             MessageBox.Show(ex.Message, "Восстановление данных");
         }
     }
@@ -232,19 +272,41 @@ public partial class SettingsViewModel : ObservableObject
             QuickCaptureEnabled = _repository.GetBooleanSetting("quick_capture.enabled", defaultValue: true);
 
             RecoveryRows.Clear();
-            var trash = _repository.GetTrashItems();
+            RefreshRecovery();
+            ErrorMessage = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _repository = null;
+            ErrorLog.Append("settings", ex);
+            ErrorMessage = "Не удалось прочитать данные: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Перечитывает корзину и резервные копии (файлы + SELECT из уже открытого
+    /// снапшота). Вызывается при каждом входе на страницу: автокопия создаётся
+    /// в фоне при старте, и без этого список оставался бы тем, каким был при
+    /// первом открытии Настроек.
+    /// </summary>
+    public void RefreshRecovery()
+    {
+        try
+        {
+            var trash = _repository?.GetTrashItems() ?? new List<TrashItem>();
+
+            RecoveryRows.Clear();
             foreach (var row in RecoveryStore.GetRecoveryRows(trash))
             {
                 RecoveryRows.Add(row);
             }
 
             RecoveryHint = RecoveryStore.Hint(RecoveryRows.Count);
-            ErrorMessage = string.Empty;
         }
         catch (Exception ex)
         {
-            _repository = null;
-            ErrorMessage = "Не удалось прочитать данные: " + ex.Message;
+            ErrorLog.Append("settings", ex);
+            ErrorMessage = "Не удалось обновить список копий: " + ex.Message;
         }
     }
 

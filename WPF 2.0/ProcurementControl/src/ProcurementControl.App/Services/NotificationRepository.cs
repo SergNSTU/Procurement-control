@@ -19,7 +19,6 @@ public static class NotificationRepository
         using var snapshot = PurchaseSnapshot.Create();
         var connection = snapshot.Connection;
 
-        var today = DateTime.Today;
         var now = DateTime.Now;
         var items = new List<DueNotification>();
 
@@ -28,7 +27,9 @@ public static class NotificationRepository
         using (var states = connection.CreateCommand())
         {
             states.CommandText = @"
-SELECT source, source_id, due_kind, due_date, handled, IFNULL(snooze_until, '') AS snooze_until
+SELECT source, source_id, due_kind, due_date, handled,
+       IFNULL(snooze_until, '') AS snooze_until,
+       IFNULL(last_shown_at, '') AS last_shown_at
 FROM notification_state";
             using var reader = states.ExecuteReader();
             while (reader.Read())
@@ -68,7 +69,7 @@ ORDER BY id DESC";
                     ("deadline", "Дедлайн", Text(reader, 7)),
                 })
                 {
-                    var entry = TryDueEntry("component", id, kind, label, text, stateByKey, today, now);
+                    var entry = TryDueEntry("component", id, kind, label, text, stateByKey, now);
                     if (entry is not null)
                     {
                         due.Add(entry);
@@ -123,7 +124,7 @@ ORDER BY reminder_date, id";
             while (reader.Read())
             {
                 var id = ToLong(reader, 0);
-                var entry = TryDueEntry("deal", id, "reminder", "Напоминание", Text(reader, 3), stateByKey, today, now);
+                var entry = TryDueEntry("deal", id, "reminder", "Напоминание", Text(reader, 3), stateByKey, now);
                 if (entry is null)
                 {
                     continue;
@@ -154,7 +155,7 @@ ORDER BY due_date, id";
             while (reader.Read())
             {
                 var id = ToLong(reader, 0);
-                var entry = TryDueEntry("reminder", id, "manual", "Напоминание", Text(reader, 2), stateByKey, today, now);
+                var entry = TryDueEntry("reminder", id, "manual", "Напоминание", Text(reader, 2), stateByKey, now);
                 if (entry is null)
                 {
                     continue;
@@ -203,9 +204,10 @@ ORDER BY due_date, id";
     }
 
     /// <summary>
-    /// Проверка даты по правилам оригинала: дата распознана, не позже
-    /// сегодняшнего дня, состояние отсутствует или ещё не закрыто
-    /// (не обработано и отсрочка истекла).
+    /// Проверка даты: дата распознана, момент наступил и состояние
+    /// отсутствует или ещё не закрыто (не обработано, отсрочка истекла).
+    /// Дата со временем срабатывает в указанное время, дата без времени —
+    /// с начала суток, как в оригинале.
     /// </summary>
     private static DueEntry? TryDueEntry(
         string source,
@@ -214,16 +216,19 @@ ORDER BY due_date, id";
         string label,
         string dateText,
         IReadOnlyDictionary<string, (bool Handled, string SnoozeUntil, string LastShownAt)> stateByKey,
-        DateTime today,
         DateTime now)
     {
         var date = PurchaseFormatting.ParseDate(dateText);
-        if (date is null || date.Value.Date > today)
+        if (date is null || date.Value > now)
         {
             return null;
         }
 
-        var normalized = date.Value.ToString("yyyy-MM-dd");
+        // Ключ состояния включает время, если оно задано: перенос напоминания
+        // на другую дату/время создаёт свежее состояние и ждёт нового момента.
+        var normalized = date.Value.TimeOfDay == TimeSpan.Zero
+            ? date.Value.ToString("yyyy-MM-dd")
+            : date.Value.ToString("yyyy-MM-dd HH:mm");
         var stateKey = $"{source}|{sourceId}|{kind}|{normalized}";
         var eligible = true;
         if (stateByKey.TryGetValue(stateKey, out var state))
@@ -235,7 +240,7 @@ ORDER BY due_date, id";
             // повторно показываем такое напоминание на следующий день. Это также
             // возвращает к жизни старые записи, закрытые до появления этого правила.
             if (!eligible && source == "reminder" &&
-                (!DateTime.TryParse(state.LastShownAt, out var lastShown) || lastShown.Date < today))
+                (!DateTime.TryParse(state.LastShownAt, out var lastShown) || lastShown.Date < now.Date))
             {
                 eligible = true;
             }

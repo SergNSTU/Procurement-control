@@ -28,6 +28,9 @@ public static class NotificationCenter
     /// <summary>Данные изменены действием карточки — страницы стоит обновить.</summary>
     public static event Action? DataChanged;
 
+    /// <summary>Публичный вызов DataChanged для внешних фич (импорт из почты).</summary>
+    public static void NotifyDataChanged() => DataChanged?.Invoke();
+
     /// <summary>
     /// Аналог Check-Notifications: если карточка уже показана или очередь не
     /// пуста — только показать следующую; иначе набрать новых кандидатов.

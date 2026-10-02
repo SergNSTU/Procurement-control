@@ -60,14 +60,15 @@ public static class PurchaseWriteRepository
             command.CommandText = @"
 INSERT INTO deals(
     deal_number, client, status, title, comment, workflow_template_id, masks,
-    created_at, ordered_at, updated_at)
+    board_count, created_at, ordered_at, updated_at)
 VALUES(
     @deal_number, @client, @status, @title, @comment,
     (SELECT id FROM workflow_templates WHERE is_default = 1 ORDER BY id LIMIT 1),
-    2, @created_at, @ordered_at, @updated_at)
+    2, @board_count, @created_at, @ordered_at, @updated_at)
 ON CONFLICT(deal_number) DO UPDATE SET
     client = CASE WHEN excluded.client <> '' THEN excluded.client ELSE client END,
     status = excluded.status,
+    board_count = COALESCE(excluded.board_count, board_count),
     ordered_at = CASE
         WHEN IFNULL(ordered_at, '') <> '' THEN ordered_at
         WHEN excluded.ordered_at IS NOT NULL THEN excluded.ordered_at
@@ -82,6 +83,9 @@ ON CONFLICT(deal_number) DO UPDATE SET
             Add(command, "@status", status);
             Add(command, "@title", draft.Title.Trim());
             Add(command, "@comment", draft.Comment.Trim());
+            Add(command, "@board_count", string.IsNullOrWhiteSpace(draft.BoardCount)
+                ? null
+                : NormalizeBoardCount(draft.BoardCount));
             Add(command, "@created_at", now);
             Add(command, "@ordered_at", status == OrderedStatus ? now : null);
             Add(command, "@updated_at", now);
@@ -1340,6 +1344,88 @@ VALUES(@batch_id, @quote_date, @rfq_value, @pn, @supplier, @unit_price, @lead_ti
         });
     }
 
+    /// <summary>Импортирует отдельные ответы в текущий пакет сделки: одинаковые строки пропускает, изменённые обновляет.</summary>
+    public static QuoteImportSaveResult SaveQuoteHistoryForDeal(IReadOnlyList<Quote> quotes, string rfqPath,
+        string comment, long dealId, string dealNumber)
+    {
+        ArgumentNullException.ThrowIfNull(quotes);
+        if (dealId <= 0) throw new InvalidOperationException("Для импорта из документов должна быть выбрана сделка.");
+        if (quotes.Count == 0) return new QuoteImportSaveResult(0, 0, 0, 0, 0);
+
+        return PurchaseWriteSession.Execute(connection =>
+        {
+            var now = NowText();
+            long batchId = 0;
+            using (var find = connection.CreateCommand())
+            {
+                // Отдельные RRFQ поставщиков не должны перезаписывать снимок
+                // итогового сравнения той же сделки.
+                find.CommandText = "SELECT id FROM quote_batches WHERE deal_id=@deal_id AND source_kind='document_import' ORDER BY id DESC LIMIT 1;";
+                Add(find, "@deal_id", dealId);
+                var value = find.ExecuteScalar();
+                if (value is not null and not DBNull) batchId = Convert.ToInt64(value);
+            }
+            if (batchId == 0)
+            {
+                using var insert = connection.CreateCommand();
+                insert.CommandText = @"INSERT INTO quote_batches(created_at,rfq_path,priority,comment,source_kind,fingerprint,data_quality,deal_id,deal_number)
+VALUES(@created_at,@rfq_path,'Price',@comment,'document_import',@fingerprint,'incomplete',@deal_id,@deal_number);";
+                Add(insert, "@created_at", now); Add(insert, "@rfq_path", rfqPath); Add(insert, "@comment", comment);
+                Add(insert, "@fingerprint", "deal-document:" + dealId); Add(insert, "@deal_id", dealId); Add(insert, "@deal_number", dealNumber);
+                insert.ExecuteNonQuery();
+                using var id = connection.CreateCommand(); id.CommandText = "SELECT last_insert_rowid();"; batchId = Convert.ToInt64(id.ExecuteScalar());
+            }
+            else
+            {
+                using var update = connection.CreateCommand();
+                update.CommandText = "UPDATE quote_batches SET deal_number=@deal_number, rfq_path=@rfq_path, comment=@comment WHERE id=@id;";
+                Add(update, "@deal_number", dealNumber); Add(update, "@rfq_path", rfqPath); Add(update, "@comment", comment); Add(update, "@id", batchId); update.ExecuteNonQuery();
+            }
+
+            var added = 0; var updated = 0; var skipped = 0; var review = 0;
+            foreach (var quote in quotes)
+            {
+                var identityKey = string.IsNullOrWhiteSpace(quote.Key) && string.IsNullOrWhiteSpace(quote.PN) ? string.Empty : quote.Key;
+                if (string.IsNullOrWhiteSpace(identityKey) && string.IsNullOrWhiteSpace(quote.PN)) { review++; continue; }
+                var positionKey = "document:" + (string.IsNullOrWhiteSpace(quote.KeyNorm)
+                    ? RrfqEngine.NormalizeKey(quote.PN)
+                    : quote.KeyNorm);
+                long existingId = 0; long isWinner = 0;
+                using (var findQuote = connection.CreateCommand())
+                {
+                    findQuote.CommandText = @"SELECT id, IFNULL(is_winner,0) FROM quote_history WHERE batch_id=@batch_id
+AND lower(trim(IFNULL(supplier,'')))=lower(trim(@supplier)) AND IFNULL(rfq_value,'')=IFNULL(@rfq_value,'') AND IFNULL(pn,'')=IFNULL(@pn,'')
+ORDER BY id DESC LIMIT 1;";
+                    Add(findQuote,"@batch_id",batchId); Add(findQuote,"@supplier",quote.Supplier); Add(findQuote,"@rfq_value",quote.Key); Add(findQuote,"@pn",quote.PN);
+                    using var reader = findQuote.ExecuteReader(); if (reader.Read()) { existingId=reader.GetInt64(0); isWinner=reader.GetInt64(1); }
+                }
+                var manufacturer = string.IsNullOrWhiteSpace(quote.MfgChina) ? quote.MfgRussia : quote.MfgChina;
+                if (existingId > 0)
+                {
+                    using var same = connection.CreateCommand();
+                    same.CommandText = @"SELECT COUNT(*) FROM quote_history WHERE id=@id AND IFNULL(unit_price,-999999999)=IFNULL(@price,-999999999)
+AND IFNULL(requested_qty,'')=IFNULL(@qty,'') AND IFNULL(currency,'')=IFNULL(@currency,'') AND IFNULL(lead_time,'')=IFNULL(@lead,'')
+AND IFNULL(lead_time_total,'')=IFNULL(@lead_total,'') AND IFNULL(mfg,'')=IFNULL(@mfg,'');";
+                    Add(same,"@id",existingId); Add(same,"@price",quote.UnitPrice); Add(same,"@qty",quote.QtyToBuy); Add(same,"@currency",quote.Currency); Add(same,"@lead",quote.LeadTime); Add(same,"@lead_total",quote.LeadTimeTotal); Add(same,"@mfg",manufacturer);
+                    if (Convert.ToInt64(same.ExecuteScalar()) > 0) { skipped++; continue; }
+                    using var change = connection.CreateCommand();
+                    change.CommandText = @"UPDATE quote_history SET quote_date=@date, unit_price=@price, requested_qty=@qty, currency=@currency, lead_time=@lead,
+lead_time_total=@lead_total, mfg=@mfg, manufacturer_raw=@mfg, manufacturer_norm=@norm, warning=@warning,
+winner_reason=CASE WHEN @winner=1 THEN 'Требуется проверка: предложение изменено' ELSE winner_reason END WHERE id=@id;";
+                    Add(change,"@date",now); Add(change,"@price",quote.UnitPrice); Add(change,"@qty",quote.QtyToBuy); Add(change,"@currency",quote.Currency); Add(change,"@lead",quote.LeadTime); Add(change,"@lead_total",quote.LeadTimeTotal); Add(change,"@mfg",manufacturer); Add(change,"@norm",SupplierAnalyticsService.NormalizeManufacturer(manufacturer)); Add(change,"@warning",quote.Warning); Add(change,"@winner",isWinner); Add(change,"@id",existingId); change.ExecuteNonQuery();
+                    updated++; if (isWinner != 0) review++; continue;
+                }
+                using var insertQuote = connection.CreateCommand();
+                insertQuote.CommandText = @"INSERT INTO quote_history(batch_id,quote_date,rfq_value,pn,supplier,unit_price,lead_time,lead_time_total,mfg,is_winner,warning,sheet_name,row_number,match_status,position_key,winner_reason,requested_qty,currency,manufacturer_raw,manufacturer_norm,lead_total_days,is_price_comparable)
+VALUES(@batch_id,@date,@rfq,@pn,@supplier,@price,@lead,@lead_total,@mfg,0,@warning,@sheet,@row,@match,@position_key,'',@qty,@currency,@mfg,@norm,@days,@comparable);";
+                Add(insertQuote,"@batch_id",batchId); Add(insertQuote,"@date",now); Add(insertQuote,"@rfq",quote.Key); Add(insertQuote,"@pn",quote.PN); Add(insertQuote,"@supplier",quote.Supplier); Add(insertQuote,"@price",quote.UnitPrice); Add(insertQuote,"@lead",quote.LeadTime); Add(insertQuote,"@lead_total",quote.LeadTimeTotal); Add(insertQuote,"@mfg",manufacturer); Add(insertQuote,"@warning",quote.Warning); Add(insertQuote,"@sheet",quote.SheetName); Add(insertQuote,"@row",quote.Row == 0 ? null : quote.Row); Add(insertQuote,"@match",quote.MatchStatus); Add(insertQuote,"@position_key",positionKey); Add(insertQuote,"@qty",quote.QtyToBuy); Add(insertQuote,"@currency",quote.Currency); Add(insertQuote,"@norm",SupplierAnalyticsService.NormalizeManufacturer(manufacturer)); Add(insertQuote,"@days",SupplierAnalyticsService.ParseLeadTimeTotalDays(quote.LeadTimeTotal)); Add(insertQuote,"@comparable",quote.IsPriceComparable ? 1 : 0); insertQuote.ExecuteNonQuery();
+                AddManufacturerAliasCandidate(connection, manufacturer); added++;
+            }
+            WriteActivity(connection,"rrfq",batchId,"Обновлена база квот сделки",$"Добавлено: {added}; обновлено: {updated}; одинаковых: {skipped}; проверка: {review}",dealId);
+            return new QuoteImportSaveResult(batchId,added,updated,skipped,review);
+        });
+    }
+
     /// <summary>
     /// Сохраняет полный снимок одного запуска сравнения RRFQ. В отличие от
     /// старого SaveQuoteHistory, здесь сохраняются позиции, участники, все
@@ -1347,30 +1433,78 @@ VALUES(@batch_id, @quote_date, @rfq_value, @pn, @supplier, @unit_price, @lead_ti
     /// </summary>
     public static AnalysisSaveResult SaveAnalysisSnapshot(RrfqAnalysis analysis, string resultPath)
     {
+        var detected = ResolveDealFromRfqPath(analysis.RfqPath);
+        var fingerprint = detected.DealId > 0 ? "deal:" + detected.DealId
+            : !string.IsNullOrWhiteSpace(detected.DealNumber) ? "deal-number:" + detected.DealNumber
+            : BuildAnalysisFingerprint(analysis);
+        return SaveAnalysisSnapshotCore(analysis, resultPath, fingerprint, detected.DealId, 0, detected.DealNumber);
+    }
+
+    private static (long DealId, string DealNumber) ResolveDealFromRfqPath(string? path)
+    {
+        var text = path ?? string.Empty;
+        var match = Regex.Match(text, @"(?<![A-Z0-9])[A-Z]{2}\d{8}[A-Z]{2}-\d{6}(?![A-Z0-9])", RegexOptions.IgnoreCase);
+        if (!match.Success) return (0, string.Empty);
+        var number = match.Value.ToUpperInvariant();
+        return PurchaseWriteSession.Execute(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT id FROM deals WHERE upper(trim(deal_number))=@number LIMIT 1;";
+            Add(command, "@number", number);
+            var value = command.ExecuteScalar();
+            return (value is null or DBNull ? 0 : Convert.ToInt64(value), number);
+        });
+    }
+
+    /// <summary>
+    /// Сохраняет единственную аналитическую когорту сделки. Идентификатор сделки,
+    /// а не состав файлов, определяет обновляемую запись.
+    /// </summary>
+    public static AnalysisSaveResult SaveDealAnalysisSnapshot(RrfqAnalysis analysis, string resultPath,
+        long dealId, string dealNumber, long summaryDocumentId)
+    {
+        if (dealId <= 0 || summaryDocumentId <= 0) throw new InvalidOperationException("Не задана сделка или сводный документ.");
+        return SaveAnalysisSnapshotCore(analysis, resultPath, "deal:" + dealId, dealId, summaryDocumentId, dealNumber);
+    }
+
+    private static AnalysisSaveResult SaveAnalysisSnapshotCore(RrfqAnalysis analysis, string resultPath,
+        string fingerprint, long dealId, long summaryDocumentId, string dealNumber)
+    {
         ArgumentNullException.ThrowIfNull(analysis);
-        var fingerprint = BuildAnalysisFingerprint(analysis);
 
         return PurchaseWriteSession.Execute(connection =>
         {
             var now = NowText();
             long batchId;
             var duplicate = false;
+            long previousSummaryDocumentId = 0;
             using (var find = connection.CreateCommand())
             {
-                find.CommandText = "SELECT id FROM quote_batches WHERE fingerprint = @fingerprint ORDER BY id DESC LIMIT 1;";
-                Add(find, "@fingerprint", fingerprint);
-                var value = find.ExecuteScalar();
-                if (value is not null and not DBNull)
+                find.CommandText = dealId > 0
+                    ? "SELECT id, IFNULL(summary_document_id, 0) FROM quote_batches WHERE deal_id=@deal_id ORDER BY id DESC LIMIT 1;"
+                    : !string.IsNullOrWhiteSpace(dealNumber)
+                        ? "SELECT id, IFNULL(summary_document_id, 0) FROM quote_batches WHERE deal_id IS NULL AND deal_number=@deal_number ORDER BY id DESC LIMIT 1;"
+                        : "SELECT id, 0 FROM quote_batches WHERE fingerprint = @fingerprint ORDER BY id DESC LIMIT 1;";
+                if (dealId > 0) Add(find, "@deal_id", dealId); else if (!string.IsNullOrWhiteSpace(dealNumber)) Add(find, "@deal_number", dealNumber); else Add(find, "@fingerprint", fingerprint);
+                using var reader = find.ExecuteReader();
+                if (reader.Read())
                 {
-                    batchId = Convert.ToInt64(value);
+                    batchId = reader.GetInt64(0);
+                    previousSummaryDocumentId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
                     duplicate = true;
+                    reader.Dispose();
                     using var update = connection.CreateCommand();
                     update.CommandText = @"UPDATE quote_batches SET rfq_path=@rfq_path, result_path=@result_path,
-priority=@priority, source_kind='full_analysis', data_quality='full', comment=@comment WHERE id=@id;";
+priority=@priority, source_kind='full_analysis', data_quality='full', comment=@comment,
+fingerprint=@fingerprint, deal_id=@deal_id, deal_number=@deal_number, summary_document_id=@summary_document_id WHERE id=@id;";
                     Add(update, "@rfq_path", analysis.RfqPath);
                     Add(update, "@result_path", resultPath);
                     Add(update, "@priority", analysis.Priority);
-                    Add(update, "@comment", "analysis");
+                    Add(update, "@comment", !string.IsNullOrWhiteSpace(dealNumber) ? "Сделка " + dealNumber : "analysis");
+                    Add(update, "@fingerprint", fingerprint);
+                    Add(update, "@deal_id", dealId > 0 ? dealId : null);
+                    Add(update, "@deal_number", string.IsNullOrWhiteSpace(dealNumber) ? null : dealNumber);
+                    Add(update, "@summary_document_id", summaryDocumentId > 0 ? summaryDocumentId : null);
                     Add(update, "@id", batchId);
                     update.ExecuteNonQuery();
 
@@ -1378,14 +1512,19 @@ priority=@priority, source_kind='full_analysis', data_quality='full', comment=@c
                 }
                 else
                 {
+                    reader.Dispose();
                     using var insert = connection.CreateCommand();
-                    insert.CommandText = @"INSERT INTO quote_batches(created_at, rfq_path, priority, comment, result_path, source_kind, fingerprint, data_quality)
-VALUES(@created_at, @rfq_path, @priority, 'analysis', @result_path, 'full_analysis', @fingerprint, 'full');";
+                    insert.CommandText = @"INSERT INTO quote_batches(created_at, rfq_path, priority, comment, result_path, source_kind, fingerprint, data_quality, deal_id, deal_number, summary_document_id)
+VALUES(@created_at, @rfq_path, @priority, @comment, @result_path, 'full_analysis', @fingerprint, 'full', @deal_id, @deal_number, @summary_document_id);";
                     Add(insert, "@created_at", now);
                     Add(insert, "@rfq_path", analysis.RfqPath);
                     Add(insert, "@priority", analysis.Priority);
                     Add(insert, "@result_path", resultPath);
                     Add(insert, "@fingerprint", fingerprint);
+                    Add(insert, "@comment", !string.IsNullOrWhiteSpace(dealNumber) ? "Сделка " + dealNumber : "analysis");
+                    Add(insert, "@deal_id", dealId > 0 ? dealId : null);
+                    Add(insert, "@deal_number", string.IsNullOrWhiteSpace(dealNumber) ? null : dealNumber);
+                    Add(insert, "@summary_document_id", summaryDocumentId > 0 ? summaryDocumentId : null);
                     insert.ExecuteNonQuery();
                     using var id = connection.CreateCommand();
                     id.CommandText = "SELECT last_insert_rowid();";
@@ -1461,7 +1600,7 @@ VALUES(@batch_id, @quote_date, @rfq_value, @pn, @supplier, @unit_price, @lead_ti
                 Add(insert, "@position_key", positionKey);
                 Add(insert, "@quote_id", quote.Id);
                 Add(insert, "@currency", quote.Currency);
-                Add(insert, "@requested_qty", target?.QtyToBuy ?? quote.QtyToBuy);
+                Add(insert, "@requested_qty", string.IsNullOrWhiteSpace(quote.QtyToBuy) ? target?.QtyToBuy : quote.QtyToBuy);
                 Add(insert, "@manufacturer_raw", manufacturer);
                 Add(insert, "@manufacturer_norm", SupplierAnalyticsService.NormalizeManufacturer(manufacturer));
                 Add(insert, "@lead_total_days", SupplierAnalyticsService.ParseLeadTimeTotalDays(quote.LeadTimeTotal));
@@ -1472,8 +1611,8 @@ VALUES(@batch_id, @quote_date, @rfq_value, @pn, @supplier, @unit_price, @lead_ti
 
             WriteActivity(connection, "rrfq", batchId,
                 duplicate ? "Обновлена аналитическая когорта RRFQ" : "Сохранена аналитическая когорта RRFQ",
-                "Квот: " + saved, 0);
-            return new AnalysisSaveResult(batchId, saved, duplicate);
+                "Квот: " + saved + (dealId > 0 ? "; сделка: " + dealNumber : string.Empty), dealId);
+            return new AnalysisSaveResult(batchId, saved, duplicate, false, previousSummaryDocumentId);
         });
     }
 

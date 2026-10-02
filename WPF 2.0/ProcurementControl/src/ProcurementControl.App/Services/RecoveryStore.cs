@@ -11,12 +11,20 @@ namespace ProcurementControl.Services;
 /// Папка восстановления — перенос чтения (Get-PurchaseRecoveryRoot,
 /// Get-RecoverySnapshotManifest, Get-PurchaseRecoverySnapshots) и записи
 /// (New-PurchaseRecoverySnapshot, Remove-PurchaseRecoverySnapshot) из
-/// app/modules/DataSafety.ps1. Полное восстановление из архива в порт не входит.
+/// app/modules/DataSafety.ps1. Восстановление из полного архива — через
+/// StageRestore + ApplyPendingRestore: архив распаковывается сразу, а замена
+/// базы выполняется при следующем запуске приложения, пока файлы не заняты.
 /// </summary>
 public static class RecoveryStore
 {
     /// <summary>Аналог Get-PurchaseRecoveryRoot: {AppRoot}/data/recovery.</summary>
     public static string RecoveryRoot => Path.Combine(AppPaths.DataRoot, "recovery");
+
+    /// <summary>Маркер отложенного восстановления (JSON со путём распакованной копии).</summary>
+    public static string PendingRestoreMarkerPath => Path.Combine(RecoveryRoot, "restore_pending.json");
+
+    /// <summary>Готово ли восстановление, ожидающее перезапуска приложения.</summary>
+    public static bool HasPendingRestore => File.Exists(PendingRestoreMarkerPath);
 
     /// <summary>Аналог Get-PurchaseRecoveryFolder: папки trash и backups.</summary>
     public static string GetFolder(string kind)
@@ -72,8 +80,9 @@ public static class RecoveryStore
     }
 
     /// <summary>
-    /// Аналог Refresh-RecoverySnapshots: сначала записи корзины из базы,
-    /// затем резервные копии (только Kind == «Backup», как строка 3573 оригинала).
+    /// Аналог Refresh-RecoverySnapshots: записи корзины из базы и резервные копии.
+    /// Отличие от оригинала (строка 3573): список единый и сортируется по дате
+    /// по убыванию — иначе новые копии терялись в конце за десятками строк корзины.
     /// </summary>
     public static List<RecoveryRow> GetRecoveryRows(IReadOnlyList<TrashItem> trashItems)
     {
@@ -86,6 +95,7 @@ public static class RecoveryStore
                 TrashId = item.Id,
                 KindText = "Корзина",
                 CreatedText = FormatTrashDate(item.DeletedAt),
+                CreatedAtSort = ParseTrashDate(item.DeletedAt) ?? DateTime.MinValue,
                 Reason = item.Title,
                 SizeText = item.HasFiles ? "с файлами" : "запись",
             });
@@ -93,18 +103,20 @@ public static class RecoveryStore
 
         foreach (var snapshot in GetSnapshots().Where(s => s.Kind == "Backup"))
         {
+            var localCreated = snapshot.CreatedAt.ToLocalTime();
             rows.Add(new RecoveryRow
             {
                 RecoveryType = "Backup",
                 SnapshotPath = snapshot.Path,
                 KindText = "Резервная копия",
-                CreatedText = snapshot.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm"),
+                CreatedText = localCreated.ToString("dd.MM.yyyy HH:mm"),
+                CreatedAtSort = localCreated,
                 Reason = snapshot.Reason,
                 SizeText = snapshot.SizeText,
             });
         }
 
-        return rows;
+        return rows.OrderByDescending(r => r.CreatedAtSort).ToList();
     }
 
     /// <summary>
@@ -249,6 +261,125 @@ public static class RecoveryStore
         }
     }
 
+    /// <summary>
+    /// Готовит восстановление из резервной копии: архив распаковывается в папку
+    /// восстановления и создаётся маркер. Сама замена данных выполняется
+    /// ApplyPendingRestore при следующем запуске приложения (оно закрывается
+    /// сразу после подтверждения), пока живая база никем не открыта.
+    /// </summary>
+    public static void StageRestore(string snapshotPath)
+    {
+        if (!IsRecoveryArchivePath(snapshotPath))
+        {
+            throw new InvalidOperationException("Восстановить можно только архив из списка восстановления.");
+        }
+
+        ReadManifest(snapshotPath);
+
+        var stage = Path.Combine(RecoveryRoot, "restore_stage_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        if (Directory.Exists(stage))
+        {
+            Directory.Delete(stage, recursive: true);
+        }
+
+        ZipFile.ExtractToDirectory(snapshotPath, stage, overwriteFiles: true);
+
+        // Архив без базы восстанавливать нельзя — остались бы только файлы.
+        if (!File.Exists(Path.Combine(stage, "purchase_control", "purchase_control.sqlite")))
+        {
+            try { Directory.Delete(stage, recursive: true); } catch { }
+            throw new InvalidOperationException("В архиве нет файла базы purchase_control.sqlite.");
+        }
+
+        var marker = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["Format"] = 1,
+            ["Stage"] = stage,
+            ["Source"] = snapshotPath,
+            ["RequestedAt"] = DateTime.Now.ToString("o"),
+        });
+        File.WriteAllText(PendingRestoreMarkerPath, marker, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
+    /// <summary>
+    /// Выполняет отложенное восстановление при запуске (вызывается из App.OnStartup
+    /// до любых подключений к базе): подменяет базу, папки документов и заметки
+    /// содержимым распакованного архива. Перед заменой делается страховочная
+    /// копия текущих данных «Перед восстановлением»; её сбой не отменяет восстановление.
+    /// </summary>
+    public static void ApplyPendingRestore()
+    {
+        if (!HasPendingRestore)
+        {
+            return;
+        }
+
+        var marker = JsonSerializer.Deserialize<PendingRestoreMarker>(
+            File.ReadAllText(PendingRestoreMarkerPath), ManifestOptions);
+        if (marker?.Stage is null)
+        {
+            throw new InvalidOperationException("Маркер восстановления повреждён.");
+        }
+
+        var stage = marker.Stage;
+        if (!Directory.Exists(stage))
+        {
+            throw new InvalidOperationException("Распакованная копия не найдена: " + stage);
+        }
+
+        try
+        {
+            CreateSnapshot("Backup", "Перед восстановлением");
+        }
+        catch (Exception exception)
+        {
+            ErrorLog.Append("restore", "Страховочная копия перед восстановлением не создана: " + exception.Message);
+        }
+
+        var dataPurchaseDirectory = AppPaths.PurchaseDataDirectory;
+        Directory.CreateDirectory(dataPurchaseDirectory);
+
+        // База: старый файл и его WAL/SHM удаляются, из архива кладётся копия.
+        foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+        {
+            var liveFile = AppPaths.PurchaseDatabasePath + suffix;
+            if (File.Exists(liveFile))
+            {
+                File.Delete(liveFile);
+            }
+        }
+
+        File.Copy(Path.Combine(stage, "purchase_control", "purchase_control.sqlite"), AppPaths.PurchaseDatabasePath);
+
+        // Папки файлов и заметок замещаются целиком; папки, которых в архиве
+        // нет (старая копия), остаются без изменений.
+        ReplaceDirectory(Path.Combine(stage, "purchase_control", "files"), Path.Combine(dataPurchaseDirectory, "files"));
+        ReplaceDirectory(Path.Combine(stage, "components", "files"), Path.Combine(AppPaths.DataRoot, "components", "files"));
+        ReplaceDirectory(Path.Combine(stage, "notes"), AppPaths.NotesDirectory);
+
+        File.Delete(PendingRestoreMarkerPath);
+        try { Directory.Delete(stage, recursive: true); } catch { }
+
+        ErrorLog.Append("restore", "Данные восстановлены из резервной копии: " + (marker.Source ?? stage));
+    }
+
+    /// <summary>Замещает папку назначения содержимым папки из распакованной копии.</summary>
+    private static void ReplaceDirectory(string source, string destination)
+    {
+        if (!Directory.Exists(source))
+        {
+            return;
+        }
+
+        if (Directory.Exists(destination))
+        {
+            Directory.Delete(destination, recursive: true);
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        Directory.Move(source, destination);
+    }
+
     /// <summary>Аналог Copy-RecoveryDirectory (DataSafety.ps1, строки 30-38).</summary>
     private static void CopyDirectory(string source, string destination)
     {
@@ -305,13 +436,12 @@ public static class RecoveryStore
     /// <summary>Аналог [datetime]::Parse для deleted_at из базы.</summary>
     private static string FormatTrashDate(string deletedAt)
     {
-        if (DateTime.TryParse(deletedAt, out var parsed))
-        {
-            return parsed.ToString("dd.MM.yyyy HH:mm");
-        }
-
-        return deletedAt;
+        var parsed = ParseTrashDate(deletedAt);
+        return parsed is null ? deletedAt : parsed.Value.ToString("dd.MM.yyyy HH:mm");
     }
+
+    private static DateTime? ParseTrashDate(string deletedAt)
+        => DateTime.TryParse(deletedAt, out var parsed) ? parsed : null;
 
     /// <summary>Аналог Get-RecoverySnapshotManifest: manifest.json из zip.</summary>
     private static RecoveryManifest ReadManifest(string path)
@@ -345,5 +475,12 @@ public static class RecoveryStore
         public string? Reason { get; set; }
 
         public string? CreatedAt { get; set; }
+    }
+
+    private sealed class PendingRestoreMarker
+    {
+        public string? Stage { get; set; }
+
+        public string? Source { get; set; }
     }
 }

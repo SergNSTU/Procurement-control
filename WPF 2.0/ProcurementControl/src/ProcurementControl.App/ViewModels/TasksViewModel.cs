@@ -175,21 +175,25 @@ public partial class TasksViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Завершение задачи: диалог Show-TaskCompletionDialog (строки 649-702
-    /// оригинала) — статус/этап, срок очищается.
+    /// Завершение задач: диалог Show-TaskCompletionDialog (строки 649-702
+    /// оригинала) — статус/этап, срок очищается. Работает и с несколькими
+    /// выбранными строками: один диалог применяется ко всем.
     /// </summary>
     [RelayCommand]
     private void CompleteTask()
+        => CompleteSelected(SelectedTask is null ? Array.Empty<TaskRow>() : new[] { SelectedTask });
+
+    public void CompleteSelected(System.Collections.IList rows)
     {
         try
         {
-            var task = SelectedTask;
-            if (task is null)
+            var tasks = rows.OfType<TaskRow>().ToList();
+            if (tasks.Count == 0)
             {
                 throw new InvalidOperationException("Выберите задачу.");
             }
 
-            var dialog = new TaskCompletionWindow(task.Status, task.Stage)
+            var dialog = new TaskCompletionWindow(tasks[0].Status, tasks[0].Stage)
             {
                 Owner = Application.Current.MainWindow,
             };
@@ -198,12 +202,16 @@ public partial class TasksViewModel : ObservableObject
                 return;
             }
 
-            PurchaseWriteRepository.UpdateComponentDealCompletion(
-                task.Id, dialog.Status, dialog.Stage,
-                clearReminderDate: true, clearDeadlineDate: true);
+            foreach (var task in tasks)
+            {
+                PurchaseWriteRepository.UpdateComponentDealCompletion(
+                    task.Id, dialog.Status, dialog.Stage,
+                    clearReminderDate: true, clearDeadlineDate: true);
+            }
+
             Load();
-            SelectedTask = Tasks.FirstOrDefault(r => r.Id == task.Id);
-            StatusText = "Задача завершена";
+            SelectedTask = Tasks.FirstOrDefault(r => r.Id == tasks[0].Id);
+            StatusText = tasks.Count == 1 ? "Задача завершена" : "Завершено задач: " + tasks.Count;
             ToastService.Show(StatusText, ToastKind.Success);
         }
         catch (Exception ex)
@@ -212,37 +220,128 @@ public partial class TasksViewModel : ObservableObject
         }
     }
 
-    /// <summary>Аналог $btnDeleteComponent: задача и папка уходят в корзину.</summary>
+    /// <summary>Аналог $btnDeleteComponent: задачи и папки уходят в корзину (один вопрос на выбор).</summary>
     [RelayCommand]
     private void DeleteTask()
+        => DeleteSelected(SelectedTask is null ? Array.Empty<TaskRow>() : new[] { SelectedTask });
+
+    public void DeleteSelected(System.Collections.IList rows)
     {
         try
         {
-            var task = SelectedTask;
-            if (task is null)
+            var tasks = rows.OfType<TaskRow>().ToList();
+            if (tasks.Count == 0)
             {
                 throw new InvalidOperationException("Выберите строку.");
             }
 
-            var answer = MessageBox.Show(
-                "Переместить задачу в корзину?\n" + task.DealNumber,
-                "Корзина",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
+            var preview = string.Join("\n", tasks.Take(6).Select(t =>
+                t.DealNumber.Length > 0 ? t.DealNumber : t.Description));
+            if (tasks.Count > 6)
+            {
+                preview += "\n… и ещё " + (tasks.Count - 6);
+            }
+
+            var question = tasks.Count == 1
+                ? "Переместить задачу в корзину?\n" + preview
+                : "Переместить задачи в корзину: " + tasks.Count + " шт.?\n" + preview;
+            var answer = MessageBox.Show(question, "Корзина", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (answer != MessageBoxResult.Yes)
             {
                 return;
             }
 
-            PurchaseWriteRepository.DeleteComponentDeal(task.Id);
+            foreach (var task in tasks)
+            {
+                PurchaseWriteRepository.DeleteComponentDeal(task.Id);
+            }
+
             Load();
-            StatusText = "Задача перемещена в корзину";
+            StatusText = tasks.Count == 1 ? "Задача перемещена в корзину" : "Перемещено в корзину: " + tasks.Count;
             ToastService.Show(StatusText, ToastKind.Info);
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "Задачи");
         }
+    }
+
+    /// <summary>Создаёт задачу в Outlook из выбранной строки: тема = сделка + описание.</summary>
+    [RelayCommand]
+    private void TaskToOutlook()
+    {
+        try
+        {
+            var task = SelectedTask ?? throw new InvalidOperationException("Выберите задачу.");
+            if (!OutlookService.IsAvailable)
+            {
+                throw new InvalidOperationException("Outlook не найден на этом компьютере.");
+            }
+
+            var subject = string.IsNullOrWhiteSpace(task.DealNumber)
+                ? task.Description
+                : task.DealNumber + " — " + task.Description;
+            var due = PurchaseFormatting.ParseDate(task.ReminderDate) ?? PurchaseFormatting.ParseDate(task.DeadlineDate);
+            var body = BuildOutlookBody(task);
+
+            OutlookService.CreateTask(subject, body, due, task.Priority);
+            StatusText = "Задача создана в Outlook";
+            ToastService.Show(StatusText, ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Задача в Outlook");
+        }
+    }
+
+    /// <summary>Открывает письмо-черновик в Outlook по выбранной задаче.</summary>
+    [RelayCommand]
+    private void LetterToOutlook()
+    {
+        try
+        {
+            var task = SelectedTask ?? throw new InvalidOperationException("Выберите задачу.");
+            if (!OutlookService.IsAvailable)
+            {
+                throw new InvalidOperationException("Outlook не найден на этом компьютере.");
+            }
+
+            var toDialog = new InputDialogWindow("Письмо в Outlook", "Адрес получателя (можно пусто)");
+            if (toDialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var subject = string.IsNullOrWhiteSpace(task.DealNumber)
+                ? task.Description
+                : "Сделка " + task.DealNumber + " — " + task.Description;
+
+            OutlookService.CreateMailDraft(toDialog.Value, subject, BuildOutlookBody(task));
+            StatusText = "Письмо создано в Outlook";
+            ToastService.Show(StatusText, ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Письмо в Outlook");
+        }
+    }
+
+    /// <summary>Тело письма/задачи Outlook: сделка, статус, этап, следующее действие и записи.</summary>
+    private static string BuildOutlookBody(TaskRow task)
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(task.DealNumber)) lines.Add("Сделка: " + task.DealNumber);
+        if (!string.IsNullOrWhiteSpace(task.Status)) lines.Add("Статус: " + task.Status);
+        if (!string.IsNullOrWhiteSpace(task.Stage)) lines.Add("Этап: " + task.Stage);
+        if (!string.IsNullOrWhiteSpace(task.NextAction)) lines.Add("След. действие: " + task.NextAction);
+        if (!string.IsNullOrWhiteSpace(task.ReminderDate)) lines.Add("Напоминание: " + task.ReminderDate);
+        if (!string.IsNullOrWhiteSpace(task.DeadlineDate)) lines.Add("Дедлайн: " + task.DeadlineDate);
+        if (!string.IsNullOrWhiteSpace(task.Notes))
+        {
+            lines.Add(string.Empty);
+            lines.Add(task.Notes);
+        }
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>

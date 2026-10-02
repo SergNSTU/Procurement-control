@@ -15,6 +15,9 @@ public sealed class PurchaseDealDraft
     public string Client { get; init; } = string.Empty;
 
     public string Status { get; init; } = "RFQ";
+
+    /// <summary>Количество плат; null или пустая строка — не заполнять.</summary>
+    public string? BoardCount { get; init; }
 }
 
 /// <summary>

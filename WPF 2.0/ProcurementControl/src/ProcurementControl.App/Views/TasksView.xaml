@@ -43,11 +43,21 @@
                     Height="30" Margin="0,0,4,0"/>
             <Button Content="Завершить"
                     Style="{StaticResource SecondaryButtonStyle}"
-                    Command="{Binding CompleteTaskCommand}"
-                    Height="30" Margin="0,0,4,0"/>
+                    Click="CompleteClick"
+                    Height="30" Margin="0,0,4,0"
+                    ToolTip="Завершить все выбранные задачи (Ctrl/Shift — несколько строк)"/>
             <Button Content="Удалить"
                     Style="{StaticResource SecondaryButtonStyle}"
-                    Command="{Binding DeleteTaskCommand}"
+                    Click="DeleteClick"
+                    Height="30" Margin="0,0,4,0"
+                    ToolTip="Переместить все выбранные задачи в корзину"/>
+            <Button Content="Задача в Outlook"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding TaskToOutlookCommand}"
+                    Height="30" Margin="0,0,4,0"/>
+            <Button Content="Письмо"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding LetterToOutlookCommand}"
                     Height="30" Margin="0,0,4,0"/>
             <Button Content="Обновить"
                     Style="{StaticResource SecondaryButtonStyle}"
@@ -65,7 +75,7 @@
                           AutoGenerateColumns="False"
                           IsReadOnly="False"
                           CanUserSortColumns="True"
-                          SelectionMode="Single"
+                          SelectionMode="Extended"
                           SelectionUnit="FullRow"
                           RowStyle="{StaticResource TaskRowStyle}"
                           BorderThickness="0"
@@ -78,6 +88,8 @@
                     <DataGrid.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="Скопировать номер сделки" Command="{Binding CopyDealNumberCommand}"/>
+                            <MenuItem Header="Задача в Outlook" Command="{Binding TaskToOutlookCommand}"/>
+                            <MenuItem Header="Письмо по сделке" Command="{Binding LetterToOutlookCommand}"/>
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>

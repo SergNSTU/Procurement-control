@@ -17,7 +17,10 @@ public partial class NotificationCardWindow : Window
         InitializeComponent();
 
         BodyText.Text = notification.Title;
-        DueValue.Text = string.Join(", ", notification.Due.Select(d => d.Date.ToString("dd.MM.yyyy")));
+        DueValue.Text = string.Join(", ", notification.Due.Select(d =>
+            d.Date.TimeOfDay == TimeSpan.Zero
+                ? d.Date.ToString("dd.MM.yyyy")
+                : d.Date.ToString("dd.MM.yyyy HH:mm")));
 
         // Для задач карточка выше и содержит описание и следующее действие.
         if (notification.Source == "component")

@@ -10,18 +10,10 @@ public partial class BitrixView : UserControl
         InitializeComponent();
     }
 
-    /// <summary>
-    /// Аналог $bitrixGrid.Add_CellDoubleClick: двойной клик по колонке «Ссылка»
-    /// открывает задачу в браузере (в остальных колонках оригинал молчит).
-    /// </summary>
-    private void TasksGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    /// <summary>Двойной клик по строке открывает задачу в Bitrix.</summary>
+    private void RowsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not DataGrid grid || grid.CurrentCell.Column is null)
-        {
-            return;
-        }
-
-        if (grid.CurrentCell.Column.Header as string == "Ссылка" && DataContext is ViewModels.BitrixViewModel vm)
+        if (DataContext is ViewModels.BitrixViewModel vm && vm.OpenLinkCommand.CanExecute(null))
         {
             vm.OpenLinkCommand.Execute(null);
         }

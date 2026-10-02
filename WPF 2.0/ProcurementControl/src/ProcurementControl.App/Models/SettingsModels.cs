@@ -62,6 +62,9 @@ public sealed class RecoveryRow
     /// <summary>Дата в формате «dd.MM.yyyy HH:mm», как в оригинале.</summary>
     public string CreatedText { get; init; } = string.Empty;
 
+    /// <summary>Дата для сортировки списка по времени (свежие сверху).</summary>
+    public DateTime CreatedAtSort { get; init; }
+
     /// <summary>Для мусора — название записи, для копии — причина из манифеста.</summary>
     public string Reason { get; init; } = string.Empty;
 

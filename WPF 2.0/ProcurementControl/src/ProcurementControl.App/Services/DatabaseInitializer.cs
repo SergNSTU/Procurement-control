@@ -72,6 +72,7 @@ public static class DatabaseInitializer
                 seed.CommandText = SeedScript;
                 seed.ExecuteNonQuery();
             }
+            EnsureAnalyticsIndexes(connection);
 
             //Pooling=false, но снимем пул явно, чтобы файл не остался открытым.
             SqliteConnection.ClearPool(connection);
@@ -140,11 +141,15 @@ CREATE TABLE IF NOT EXISTS reminder_suppressions(
     created_at   TEXT
 );";
         command.ExecuteNonQuery();
+        EnsureAnalyticsIndexes(connection);
 
         EnsureColumn(connection, "quote_batches", "result_path", "TEXT");
         EnsureColumn(connection, "quote_batches", "source_kind", "TEXT DEFAULT 'legacy'");
         EnsureColumn(connection, "quote_batches", "fingerprint", "TEXT");
         EnsureColumn(connection, "quote_batches", "data_quality", "TEXT DEFAULT 'legacy'");
+        EnsureColumn(connection, "quote_batches", "deal_id", "INTEGER");
+        EnsureColumn(connection, "quote_batches", "summary_document_id", "INTEGER");
+        EnsureColumn(connection, "quote_batches", "deal_number", "TEXT");
         EnsureColumn(connection, "quote_history", "position_key", "TEXT");
         EnsureColumn(connection, "quote_history", "quote_id", "TEXT");
         EnsureColumn(connection, "quote_history", "currency", "TEXT");
@@ -153,8 +158,72 @@ CREATE TABLE IF NOT EXISTS reminder_suppressions(
         EnsureColumn(connection, "quote_history", "manufacturer_norm", "TEXT");
         EnsureColumn(connection, "quote_history", "lead_total_days", "REAL");
         EnsureColumn(connection, "quote_history", "is_price_comparable", "INTEGER DEFAULT 1");
+        EnsureColumn(connection, "notification_state", "last_shown_at", "TEXT");
+        EnsureColumn(connection, "bitrix_task_links", "source", "TEXT");
+        BackfillBitrixTaskLinkSources(connection);
         BackfillRequestedQuantities(connection);
+        ClassifyLegacyPiImports(connection);
+        ClassifyLegacyComparisonResults(connection);
+        BackfillBatchDealLinks(connection);
+        ConsolidateDealBatches(connection);
+        BackfillDocumentImportPositionKeys(connection);
         SqliteConnection.ClearPool(connection);
+    }
+
+    /// <summary>
+    /// Связи, появившиеся до метки источника, созданы не автоимпортом (импорт
+    /// заработал позже), а конвейером RFQ; вкладка «Bitrix API Test» показывает
+    /// только импортные.
+    /// </summary>
+    private static void BackfillBitrixTaskLinkSources(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE bitrix_task_links SET source='rfq_pipeline' WHERE source IS NULL;";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Старые PI лежали в базе как legacy, хотя содержат только итоговые
+    /// победившие позиции, а не ответы на весь RFQ. Такие пакеты нельзя
+    /// использовать в частоте ответа и доле побед.
+    /// </summary>
+    private static void ClassifyLegacyPiImports(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+UPDATE quote_batches
+SET source_kind='winner-only', data_quality='incomplete',
+    comment=CASE WHEN IFNULL(comment,'')='' THEN 'winner-only legacy PI' ELSE comment END
+WHERE IFNULL(source_kind,'legacy')='legacy'
+  AND IFNULL(rfq_path,'') LIKE '%\Общий_PI\%';";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>Итоговый файл сравнения содержит уже отобранные и сведённые строки, а не независимые RRFQ поставщиков.</summary>
+    private static void ClassifyLegacyComparisonResults(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+UPDATE quote_batches
+SET source_kind='comparison-result', data_quality='derived',
+    comment=CASE WHEN IFNULL(comment,'')='' THEN 'legacy comparison result' ELSE comment END
+WHERE IFNULL(source_kind,'legacy')='legacy'
+  AND lower(IFNULL(rfq_path,'')) LIKE '%_result.xlsx';";
+        command.ExecuteNonQuery();
+    }
+
+    private static void EnsureAnalyticsIndexes(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+CREATE INDEX IF NOT EXISTS ix_quote_history_batch_position_supplier ON quote_history(batch_id, position_key, supplier);
+CREATE INDEX IF NOT EXISTS ix_quote_history_pn ON quote_history(pn);
+CREATE INDEX IF NOT EXISTS ix_quote_history_manufacturer ON quote_history(manufacturer_raw);
+CREATE INDEX IF NOT EXISTS ix_quote_batches_deal_number ON quote_batches(deal_number);
+CREATE INDEX IF NOT EXISTS ix_quote_batches_deal_id ON quote_batches(deal_id);
+CREATE INDEX IF NOT EXISTS ix_quote_batch_positions_batch_position ON quote_batch_positions(batch_id, position_key);
+CREATE INDEX IF NOT EXISTS ix_quote_batch_suppliers_batch_supplier ON quote_batch_suppliers(batch_id, supplier);";
+        command.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -183,6 +252,94 @@ WHERE IFNULL(TRIM(requested_qty), '') = ''
         AND IFNULL(TRIM(p.requested_qty), '') <> ''
   );";
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>Связывает старые пакеты только с точно распознанным номером существующей сделки.</summary>
+    private static void BackfillBatchDealLinks(SqliteConnection connection)
+    {
+        var deals = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        using (var readDeals = connection.CreateCommand())
+        {
+            readDeals.CommandText = "SELECT id, deal_number FROM deals WHERE IFNULL(TRIM(deal_number), '') <> '';";
+            using var reader = readDeals.ExecuteReader();
+            while (reader.Read()) deals[reader.GetString(1).Trim()] = reader.GetInt64(0);
+        }
+        if (deals.Count == 0) return;
+        var rows = new List<(long Id, string Path)>();
+        using (var readBatches = connection.CreateCommand())
+        {
+            readBatches.CommandText = "SELECT id, IFNULL(rfq_path, '') FROM quote_batches WHERE IFNULL(deal_id, 0)=0 AND IFNULL(TRIM(deal_number), '')='';";
+            using var reader = readBatches.ExecuteReader();
+            while (reader.Read()) rows.Add((reader.GetInt64(0), reader.GetString(1)));
+        }
+        foreach (var row in rows)
+        {
+            var number = deals.Keys.FirstOrDefault(number => row.Path.Contains(number, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(number)) continue;
+            using var update = connection.CreateCommand();
+            update.CommandText = "UPDATE quote_batches SET deal_id=@deal_id, deal_number=@deal_number WHERE id=@id;";
+            update.Parameters.AddWithValue("@deal_id", deals[number]);
+            update.Parameters.AddWithValue("@deal_number", number);
+            update.Parameters.AddWithValue("@id", row.Id);
+            update.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Для старых пакетов одной сделки оставляет одну сборку и переносит в неё квоты.</summary>
+    private static void ConsolidateDealBatches(SqliteConnection connection)
+    {
+        var groups = new List<(long DealId, long KeepId)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"SELECT deal_id, MAX(id) FROM quote_batches WHERE IFNULL(deal_id,0)>0 GROUP BY deal_id HAVING COUNT(*)>1;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) groups.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        }
+        foreach (var group in groups)
+        {
+            using (var move = connection.CreateCommand())
+            {
+                move.CommandText = "UPDATE quote_history SET batch_id=@keep WHERE batch_id IN (SELECT id FROM quote_batches WHERE deal_id=@deal AND id<>@keep);";
+                move.Parameters.AddWithValue("@keep", group.KeepId); move.Parameters.AddWithValue("@deal", group.DealId); move.ExecuteNonQuery();
+            }
+            // Оставляем последнюю запись одинакового предложения; более новые строки имеют больший id.
+            using (var deduplicate = connection.CreateCommand())
+            {
+                deduplicate.CommandText = @"DELETE FROM quote_history WHERE batch_id=@keep AND id NOT IN (
+SELECT MAX(id) FROM quote_history WHERE batch_id=@keep GROUP BY lower(trim(IFNULL(supplier,''))), IFNULL(rfq_value,''), IFNULL(pn,''),
+IFNULL(unit_price,-999999999), IFNULL(requested_qty,''), IFNULL(currency,''), IFNULL(lead_time,''), IFNULL(lead_time_total,''), IFNULL(mfg,''));";
+                deduplicate.Parameters.AddWithValue("@keep", group.KeepId); deduplicate.ExecuteNonQuery();
+            }
+            using (var delete = connection.CreateCommand())
+            {
+                delete.CommandText = "DELETE FROM quote_batches WHERE deal_id=@deal AND id<>@keep;";
+                delete.Parameters.AddWithValue("@deal", group.DealId); delete.Parameters.AddWithValue("@keep", group.KeepId); delete.ExecuteNonQuery();
+            }
+        }
+    }
+
+    /// <summary>Починка старых импортов: ключ позиции не должен зависеть от строки Excel.</summary>
+    private static void BackfillDocumentImportPositionKeys(SqliteConnection connection)
+    {
+        var rows = new List<(long Id, string Key, string Pn)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"SELECT q.id, IFNULL(q.rfq_value,''), IFNULL(q.pn,'') FROM quote_history q
+JOIN quote_batches b ON b.id=q.batch_id WHERE b.source_kind='document_import'
+AND (IFNULL(q.position_key,'')='' OR q.position_key NOT LIKE 'document:%');";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2)));
+        }
+        foreach (var row in rows)
+        {
+            var normalized = RrfqEngine.NormalizeKey(string.IsNullOrWhiteSpace(row.Key) ? row.Pn : row.Key);
+            if (string.IsNullOrWhiteSpace(normalized)) continue;
+            using var update = connection.CreateCommand();
+            update.CommandText = "UPDATE quote_history SET position_key=@key WHERE id=@id;";
+            update.Parameters.AddWithValue("@key", "document:" + normalized);
+            update.Parameters.AddWithValue("@id", row.Id);
+            update.ExecuteNonQuery();
+        }
     }
 
     private static void EnsureColumn(SqliteConnection connection, string table, string column, string definition)
@@ -371,6 +528,9 @@ CREATE TABLE IF NOT EXISTS quote_batches(
     source_kind TEXT DEFAULT 'legacy',
     fingerprint TEXT,
     data_quality TEXT DEFAULT 'legacy'
+    ,deal_id INTEGER
+    ,summary_document_id INTEGER
+    ,deal_number TEXT
 );
 
 CREATE TABLE IF NOT EXISTS quote_history(
@@ -479,7 +639,8 @@ CREATE TABLE IF NOT EXISTS bitrix_task_links(
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     deal_id        INTEGER,
     bitrix_task_id INTEGER,
-    created_at     TEXT
+    created_at     TEXT,
+    source         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workflow_templates(

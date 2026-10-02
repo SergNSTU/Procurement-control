@@ -19,7 +19,7 @@ public static class PurchaseDocumentsStore
     /// <summary>Типы документов из диалога оригинала (Show-DocumentTypeDialog).</summary>
     public static readonly string[] DocumentTypes =
     {
-        "PI/Invoice", "Общий PI", "RFQ", "RRFQ", "PO", "ERP", "Other",
+        "PI/Invoice", "Общий PI", "RFQ", "RRFQ", "Сводный RRFQ", "PO", "ERP", "Other",
     };
 
     /// <summary>Корень документов по умолчанию: {данные закупок}\files.</summary>
@@ -45,6 +45,7 @@ public static class PurchaseDocumentsStore
         command.CommandText = @"
 SELECT
     doc.id,
+    IFNULL(doc.supplier_id, 0) AS supplier_id,
     doc.document_type,
     IFNULL(ds.supplier, '') AS supplier,
     doc.original_name,
@@ -63,12 +64,13 @@ ORDER BY doc.uploaded_at DESC, doc.id DESC;";
             result.Add(new PurchaseDocumentRow
             {
                 Id = reader.GetInt64(0),
-                DocumentType = reader.GetString(1),
-                Supplier = reader.GetString(2),
-                OriginalName = reader.GetString(3),
-                StoredPath = reader.GetString(4),
-                FileHash = reader.GetString(5),
-                UploadedAt = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
+                SupplierId = reader.GetInt64(1),
+                DocumentType = reader.GetString(2),
+                Supplier = reader.GetString(3),
+                OriginalName = reader.GetString(4),
+                StoredPath = reader.GetString(5),
+                FileHash = reader.GetString(6),
+                UploadedAt = reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
             });
         }
         return result;
@@ -88,8 +90,11 @@ ORDER BY doc.uploaded_at DESC, doc.id DESC;";
     /// Порт Add-PurchaseDocument (строки 2141-2192): копия файла кладётся в
     /// {корень}\{номер сделки}\{папка}, где папка = переданное имя, тип
     /// документа уровня сделки или имя поставщика. Возвращает путь копии.
+    /// displayName — имя документа в хранилище и базе; по умолчанию берётся
+    /// из имени исходного файла (нужно импорту из почты, у которого исходник —
+    /// временный файл со служебным именем).
     /// </summary>
-    public static string AddDocument(long dealId, long supplierId, string documentType, string sourcePath, string folderName = "")
+    public static string AddDocument(long dealId, long supplierId, string documentType, string sourcePath, string folderName = "", string displayName = "")
     {
         if (dealId <= 0)
         {
@@ -128,7 +133,9 @@ ORDER BY doc.uploaded_at DESC, doc.id DESC;";
             var targetDir = Path.Combine(root, SafePathPart(dealNumber), SafePathPart(folderPart));
             Directory.CreateDirectory(targetDir);
 
-            var originalName = Path.GetFileName(sourcePath);
+            var originalName = string.IsNullOrWhiteSpace(displayName)
+                ? Path.GetFileName(sourcePath)
+                : displayName.Trim();
             var targetPath = GetUniqueDocumentPath(targetDir, originalName);
             File.Copy(sourcePath, targetPath);
 
@@ -397,7 +404,57 @@ WHERE id = @supplier_id AND IFNULL(invoice_received, 0) = 0;";
     public static bool IsDealLevelDocumentType(string? documentType)
     {
         var text = string.IsNullOrWhiteSpace(documentType) ? string.Empty : documentType.Trim();
-        return text is "Общий PI" or "RFQ" or "RRFQ" or "PO" or "Other";
+        return text is "Общий PI" or "RFQ" or "Сводный RRFQ" or "PO" or "Other";
+    }
+
+    /// <summary>Меняет тип или поставщика без повторной загрузки и без перемещения файла.</summary>
+    public static void UpdateDocumentBinding(long documentId, string documentType, long supplierId)
+    {
+        var type = ConvertDocumentType(documentType);
+        if (documentId <= 0) throw new InvalidOperationException("Выберите документ.");
+        if (IsDealLevelDocumentType(type)) supplierId = 0;
+        if (type == "RRFQ" && supplierId <= 0)
+            throw new InvalidOperationException("Для RRFQ выберите поставщика сделки.");
+
+        PurchaseWriteSession.Execute(connection =>
+        {
+            var rows = PurchaseWriteRepository.SelectRows(connection,
+                "SELECT deal_id, original_name FROM documents WHERE id=@id",
+                command => PurchaseWriteRepository.Add(command, "@id", documentId));
+            if (rows.Count == 0) throw new InvalidOperationException("Документ не найден.");
+            var dealId = PurchaseWriteRepository.ToLong(rows[0].GetValueOrDefault("deal_id"));
+            if (supplierId > 0)
+            {
+                var owner = ScalarString(connection, "SELECT CAST(deal_id AS TEXT) FROM deal_suppliers WHERE id=@id", supplierId);
+                if (!string.Equals(owner, dealId.ToString(), StringComparison.Ordinal))
+                    throw new InvalidOperationException("Поставщик не принадлежит этой сделке.");
+            }
+            using var update = connection.CreateCommand();
+            update.CommandText = "UPDATE documents SET document_type=@type, supplier_id=@supplier_id WHERE id=@id;";
+            PurchaseWriteRepository.Add(update, "@type", type);
+            PurchaseWriteRepository.Add(update, "@supplier_id", supplierId > 0 ? supplierId : null);
+            PurchaseWriteRepository.Add(update, "@id", documentId);
+            update.ExecuteNonQuery();
+            TouchDeal(connection, dealId);
+            PurchaseWriteRepository.WriteActivity(connection, "document", documentId, "Изменен тип / поставщик документа",
+                type + ": " + AsString(rows[0].GetValueOrDefault("original_name")), dealId, supplierId);
+            return 0;
+        });
+    }
+
+    public static long GetNewestDocumentId(long dealId, string documentType, string originalName)
+    {
+        return PurchaseWriteSession.Execute(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = @"SELECT id FROM documents WHERE deal_id=@deal_id AND document_type=@type
+AND original_name=@name ORDER BY id DESC LIMIT 1;";
+            PurchaseWriteRepository.Add(command, "@deal_id", dealId);
+            PurchaseWriteRepository.Add(command, "@type", documentType);
+            PurchaseWriteRepository.Add(command, "@name", originalName);
+            var value = command.ExecuteScalar();
+            return value is null or DBNull ? 0 : Convert.ToInt64(value);
+        });
     }
 
     // ----- вспомогательные порты путей и хэшей ------------------------------

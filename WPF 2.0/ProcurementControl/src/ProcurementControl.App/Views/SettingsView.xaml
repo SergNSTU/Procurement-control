@@ -55,6 +55,10 @@
                         Command="{Binding SaveSettingsCommand}"
                         Height="32" Width="170" HorizontalAlignment="Left"
                         Margin="0,16,0,0"/>
+
+                <TextBlock Text="{Binding AppVersion}"
+                           Foreground="{StaticResource MutedBrush}" FontSize="11"
+                           Margin="0,12,0,0"/>
             </StackPanel>
         </Border>
 
@@ -70,23 +74,31 @@
 
                 <TextBlock Grid.Row="0" Style="{StaticResource SectionTitle}" Text="Корзина и резервные копии" Margin="0,0,0,12"/>
 
-                <StackPanel Grid.Row="1" Orientation="Horizontal">
-                    <Button Content="Создать копию"
-                            Style="{StaticResource PrimaryButtonStyle}"
-                            Command="{Binding CreateBackupCommand}"
-                            Height="30" Width="125" Margin="0,0,8,0"/>
-                    <Button Content="Восстановить выбранное"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Command="{Binding RestoreSelectedCommand}"
-                            Height="30" Width="185" Margin="0,0,8,0"/>
-                    <Button Content="Удалить безвозвратно"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Command="{Binding DeleteSelectedCommand}"
-                            Height="30" Width="165" Margin="0,0,8,0"/>
-                    <Button Content="Папка копий"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Command="{Binding OpenFolderCommand}"
-                            Height="30" Width="125"/>
+                <StackPanel Grid.Row="1">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Создать копию"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                Command="{Binding CreateBackupCommand}"
+                                Height="30" Width="125" Margin="0,0,8,0"/>
+                        <Button Content="Восстановить выбранное"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Command="{Binding RestoreSelectedCommand}"
+                                Height="30" Width="185" Margin="0,0,8,0"/>
+                        <Button Content="Удалить безвозвратно"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Command="{Binding DeleteSelectedCommand}"
+                                Height="30" Width="165" Margin="0,0,8,0"/>
+                        <Button Content="Папка копий"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Command="{Binding OpenFolderCommand}"
+                                Height="30" Width="125"/>
+                    </StackPanel>
+                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
+                               Foreground="{StaticResource WarnTextBrush}">
+                        <Run Text="Копия включает базу, внутренние файлы и заметки. Внешняя папка документов «"/>
+                        <Run Text="{Binding DocumentsRoot}"/>
+                        <Run Text="» в копию не входит: копируйте её отдельно."/>
+                    </TextBlock>
                 </StackPanel>
 
                 <Border Grid.Row="2" CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10" Margin="0,12,0,0">

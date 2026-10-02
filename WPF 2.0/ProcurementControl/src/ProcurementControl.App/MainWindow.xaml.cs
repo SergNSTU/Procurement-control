@@ -18,6 +18,10 @@ public partial class MainWindow : Window
         PurchaseWriteRepository.EnsureComponentOrderAmountColumn();
         DataContext = new MainViewModel();
         StateChanged += (_, _) => UpdateMaximizeIcon();
+        // Статусная строка долгих операций: ProgressService сам доставляет
+        // события в UI-поток, так что подписка безопасна из любого места.
+        ProgressService.Changed += OnProgressChanged;
+        Closed += (_, _) => ProgressService.Changed -= OnProgressChanged;
         // Глобальные хоткеи быстрого захвата требуют готового HWND.
         SourceInitialized += (_, _) =>
         {
@@ -25,6 +29,30 @@ public partial class MainWindow : Window
             source.AddHook(WindowProc);
             QuickCaptureService.Register(this);
         };
+    }
+
+    private static void OnProgressChanged(object? sender, ProgressEventArgs args)
+    {
+        var window = Application.Current?.MainWindow as MainWindow;
+        if (window?.ProgressPanel is null)
+        {
+            return;
+        }
+
+        window.ProgressPanel.Visibility = args.Active ? Visibility.Visible : Visibility.Collapsed;
+        if (!args.Active)
+        {
+            // Сброс режима останавливает indeterminate-анимацию, пока полоса скрыта.
+            window.ActivityIndicator.IsIndeterminate = false;
+            return;
+        }
+
+        window.ActivityText.Text = args.Text;
+        window.ActivityIndicator.IsIndeterminate = args.IsIndeterminate;
+        if (!args.IsIndeterminate)
+        {
+            window.ActivityIndicator.Value = args.Percent;
+        }
     }
 
     /// <summary>Аналог кнопки свернуть оригинальной формы.</summary>

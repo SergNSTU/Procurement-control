@@ -112,35 +112,63 @@ public static class PurchaseLogic
         => value.Contains(needle, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Попадание сделки в плитку «Активные» (обновление метрики и список по клику).
+    /// reason — почему сделка активна: «активная», «отслеживание» или «Китай».
+    /// </summary>
+    public static bool IsCockpitActiveDeal(PurchaseDealRow row, out string reason)
+    {
+        reason = string.Empty;
+        if (row.Archived == 1)
+        {
+            return false;
+        }
+
+        var status = row.Status.Trim();
+        var location = row.AssemblyLocation.Trim();
+        var executor = row.Executor.Trim();
+        var isOperationalStage = status is "PO" or "RFQ" or "Закупка";
+        if (executor.Length > 0 && isOperationalStage)
+        {
+            reason = "отслеживание";
+            return true;
+        }
+
+        if (location == "Китай" && isOperationalStage)
+        {
+            reason = "Китай";
+            return true;
+        }
+
+        var isActiveFilterDeal =
+            location != "Китай"
+            && executor.Length == 0
+            && (status is "RFQ" or "PO" or "Закупка" or "В работе"
+                || (status == "Заказано"
+                    && (row.SupplierCount == 0 || row.InvoiceConfirmedCount < row.SupplierCount)));
+        if (isActiveFilterDeal)
+        {
+            reason = "активная";
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Метрики карточек: перенос Update-PurchaseCockpitMetrics и
     /// Get-ActiveCockpitDealCount (дедупликация по ключу сделки).
+    /// «Ожидаем поступления» — сделки, где у поставщиков есть план, а факта
+    /// ещё нет; «Просрочено» — из них те, чей план уже прошёл.
     /// </summary>
-    public static (int Active, int Overdue, int WorkAndPaymentTasks, int Attention) ComputeMetrics(
+    public static (int Active, int Overdue, int WorkAndPaymentTasks, int ExpectingReceipt) ComputeMetrics(
         IReadOnlyList<PurchaseDealRow> rows,
-        IReadOnlyList<CockpitTaskKey> taskKeys)
+        IReadOnlyList<CockpitTaskKey> taskKeys,
+        IReadOnlyList<SupplierPlanRow> planRows)
     {
         var keys = new HashSet<string>();
         foreach (var row in rows)
         {
-            if (row.Archived == 1)
-            {
-                continue;
-            }
-
-            var status = row.Status.Trim();
-            var location = row.AssemblyLocation.Trim();
-            var executor = row.Executor.Trim();
-            var isOperationalStage = status is "PO" or "RFQ" or "Закупка";
-            var isActiveFilterDeal =
-                location != "Китай"
-                && executor.Length == 0
-                && (status is "RFQ" or "PO" or "Закупка" or "В работе"
-                    || (status == "Заказано"
-                        && (row.SupplierCount == 0 || row.InvoiceConfirmedCount < row.SupplierCount)));
-            var isTrackingFilterDeal = executor.Length > 0 && isOperationalStage;
-            var isChinaFilterDeal = location == "Китай" && isOperationalStage;
-
-            if (!isActiveFilterDeal && !isTrackingFilterDeal && !isChinaFilterDeal)
+            if (!IsCockpitActiveDeal(row, out _))
             {
                 continue;
             }
@@ -154,27 +182,183 @@ public static class PurchaseLogic
         }
 
         var today = DateTime.Today;
-        var overdue = 0;
-        var attention = 0;
-        foreach (var row in rows)
+        var expectingDeals = new HashSet<long>();
+        var overdueDeals = new HashSet<long>();
+        foreach (var plan in planRows)
         {
-            var isDone = DoneStatusRegex.IsMatch(row.Status);
-            var receipt = PurchaseFormatting.ParseDate(row.CompletionReceiptDate);
-            if (receipt is not null && row.Archived != 1 && !isDone)
+            if (DoneStatusRegex.IsMatch(plan.Status) ||
+                PurchaseFormatting.ParseDate(plan.ComponentsReceiptDate) is null ||
+                PurchaseFormatting.ParseDate(plan.ActualReceiptDate) is not null)
             {
-                if (receipt.Value.Date < today)
-                {
-                    overdue++;
-                }
+                continue;
             }
-            if (row.Archived != 1 && row.SupplierCount > 0 && row.InvoiceConfirmedCount < row.SupplierCount)
+
+            expectingDeals.Add(plan.DealId);
+            if (PurchaseFormatting.IsReceiptOverdue(plan.ComponentsReceiptDate, plan.ActualReceiptDate, today))
             {
-                attention++;
+                overdueDeals.Add(plan.DealId);
             }
         }
 
-        return (keys.Count, overdue, taskKeys.Count, attention);
+        return (keys.Count, overdueDeals.Count, taskKeys.Count, expectingDeals.Count);
     }
+
+    /// <summary>
+    /// Списки под плитками метрик: клик по плитке показывает, что в неё входит,
+    /// двойной клик по строке переходит к сделке. Активные дедуплицируются
+    /// по номеру так же, как в ComputeMetrics.
+    /// </summary>
+    public static (string Title, List<TileLineRow> Lines) BuildTileLines(
+        string tileKey,
+        IReadOnlyList<PurchaseDealRow> rows,
+        IReadOnlyList<CockpitTaskKey> taskKeys,
+        IReadOnlyList<SupplierPlanRow> planRows,
+        IReadOnlyList<DealReminderRow> dealReminders,
+        IReadOnlyList<ManualReminderRow> manualReminders,
+        DateTime today)
+    {
+        switch (tileKey)
+        {
+            case "active":
+            {
+                var seen = new HashSet<string>();
+                var lines = new List<TileLineRow>();
+                foreach (var row in rows)
+                {
+                    if (!IsCockpitActiveDeal(row, out var reason) ||
+                        !seen.Add(DealKey(row.DealNumber, row.Id, "purchase")))
+                    {
+                        continue;
+                    }
+
+                    lines.Add(new TileLineRow
+                    {
+                        Text = row.DealNumber + " — " + reason + ClientSuffix(row.Client),
+                        DealId = row.Id,
+                        DealNumber = row.DealNumber,
+                    });
+                }
+
+                foreach (var task in taskKeys)
+                {
+                    if (!seen.Add(DealKey(task.DealNumber, task.Id, "task")))
+                    {
+                        continue;
+                    }
+
+                    lines.Add(new TileLineRow
+                    {
+                        Text = task.DealNumber + " — задача, этап: " + task.Status,
+                        DealNumber = task.DealNumber,
+                    });
+                }
+
+                return ("Активные сделки", lines);
+            }
+
+            case "expecting":
+            {
+                // Одна строка на сделку: у поставщиков есть план, факта ещё нет.
+                var lines = new List<TileLineRow>();
+                foreach (var group in planRows
+                    .Where(plan => !DoneStatusRegex.IsMatch(plan.Status) &&
+                                   PurchaseFormatting.ParseDate(plan.ComponentsReceiptDate) is not null &&
+                                   PurchaseFormatting.ParseDate(plan.ActualReceiptDate) is null)
+                    .GroupBy(plan => plan.DealId))
+                {
+                    var first = group.First();
+                    var details = string.Join(", ", group.Select(plan =>
+                    {
+                        var planText = PurchaseFormatting.ParseDate(plan.ComponentsReceiptDate) is { } planDate
+                            ? planDate.ToString("dd.MM.yyyy")
+                            : PurchaseFormatting.DateOrRaw(plan.ComponentsReceiptDate);
+                        return plan.Supplier + " (план " + planText + ")";
+                    }));
+
+                    lines.Add(new TileLineRow
+                    {
+                        Text = first.DealNumber + " — ждём: " + details,
+                        DealId = first.DealId,
+                        DealNumber = first.DealNumber,
+                    });
+                }
+
+                return ("Ожидаем поступления", lines);
+            }
+
+            case "overdue":
+            {
+                // Одна строка на сделку — чтобы число строк совпадало с плиткой;
+                // в строке перечислены поставщики, чей план прошёл без факта.
+                var lines = new List<TileLineRow>();
+                foreach (var group in planRows
+                    .Where(plan => !DoneStatusRegex.IsMatch(plan.Status) &&
+                                   PurchaseFormatting.IsReceiptOverdue(
+                                       plan.ComponentsReceiptDate, plan.ActualReceiptDate, today))
+                    .GroupBy(plan => plan.DealId))
+                {
+                    var first = group.First();
+                    var details = string.Join(", ", group.Select(plan =>
+                    {
+                        var planText = PurchaseFormatting.ParseDate(plan.ComponentsReceiptDate) is { } planDate
+                            ? planDate.ToString("dd.MM.yyyy")
+                            : PurchaseFormatting.DateOrRaw(plan.ComponentsReceiptDate);
+                        return plan.Supplier + " (план " + planText + ")";
+                    }));
+
+                    lines.Add(new TileLineRow
+                    {
+                        Text = first.DealNumber + " — не поступило: " + details,
+                        DealId = first.DealId,
+                        DealNumber = first.DealNumber,
+                    });
+                }
+
+                return ("Просрочено", lines);
+            }
+
+            case "tasks":
+                return ("Задачи в работе", taskKeys.Select(task => new TileLineRow
+                {
+                    Text = task.DealNumber + " — этап: " + task.Status,
+                    DealNumber = task.DealNumber,
+                }).ToList());
+
+            case "reminders":
+            {
+                var lines = new List<TileLineRow>();
+                foreach (var reminder in dealReminders)
+                {
+                    lines.Add(new TileLineRow
+                    {
+                        Text = reminder.DealNumber + " — напоминание " +
+                               PurchaseFormatting.DateOrRaw(reminder.ReminderDate),
+                        DealId = reminder.Id,
+                        DealNumber = reminder.DealNumber,
+                    });
+                }
+
+                foreach (var reminder in manualReminders)
+                {
+                    lines.Add(new TileLineRow
+                    {
+                        Text = reminder.Title + (reminder.DueDate.Length > 0
+                            ? " — " + PurchaseFormatting.DateOrRaw(reminder.DueDate)
+                            : string.Empty),
+                        DealId = reminder.DealId,
+                    });
+                }
+
+                return ("Напоминания", lines);
+            }
+
+            default:
+                return (string.Empty, new List<TileLineRow>());
+        }
+    }
+
+    private static string ClientSuffix(string client)
+        => string.IsNullOrWhiteSpace(client) ? string.Empty : " · " + client.Trim();
 
     private static string DealKey(string dealNumber, long id, string prefix)
     {
@@ -227,15 +411,6 @@ public static class PurchaseLogic
             {
                 AddAutoItem(items, row, "Warn", prefix + ": нет PI", "", suppressedAutomaticKeys);
                 continue;
-            }
-
-            if (!row.PaymentSubmitted)
-            {
-                AddAutoItem(items, row, "Info", prefix + ": PI есть, но не подан в оплату", "", suppressedAutomaticKeys);
-            }
-            else if (!row.Paid)
-            {
-                AddAutoItem(items, row, "Attention", prefix + ": подан в оплату, но не оплачен", "", suppressedAutomaticKeys);
             }
 
             if (string.IsNullOrWhiteSpace(row.InvoiceConfirmedDate))

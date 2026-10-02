@@ -8,9 +8,13 @@ public sealed class PurchaseDocumentRow
 {
     public long Id { get; set; }
 
+    public long SupplierId { get; set; }
+
     public string DocumentType { get; set; } = string.Empty;
 
     public string Supplier { get; set; } = string.Empty;
+
+    public string SupplierDisplay => string.IsNullOrWhiteSpace(Supplier) ? "Поставщик не указан" : Supplier;
 
     public string OriginalName { get; set; } = string.Empty;
 

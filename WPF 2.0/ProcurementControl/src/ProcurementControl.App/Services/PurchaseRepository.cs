@@ -261,7 +261,11 @@ ORDER BY supplier";
 
     /// <summary>
     /// Запрос поставщиков активных сделок для авто-пунктов «Напоминаний».
-    /// Точный перенос SQL из Get-PurchaseActionItems (PurchaseStore.ps1, строки 1231-1252).
+    /// База — SQL из Get-PurchaseActionItems (PurchaseStore.ps1, строки 1231-1252).
+    /// Правило пользователя от 2026-09-29 (отклонение от оригинала): авто-пункты
+    /// строятся только по неархивным сделкам на этапе «Закупка» и «Заказано» —
+    /// на остальных этапах заказа ещё нет, поставщики заведены только для
+    /// привязки документов.
     /// </summary>
     public List<SupplierActionRow> GetSupplierActionRows()
     {
@@ -286,6 +290,7 @@ SELECT
 FROM deal_suppliers ds
 JOIN deals d ON d.id = ds.deal_id
 WHERE IFNULL(d.archived, 0) = 0
+  AND TRIM(IFNULL(d.status, '')) IN ('Закупка', 'Заказано')
 ORDER BY d.updated_at DESC, d.deal_number, ds.supplier";
 
         var result = new List<SupplierActionRow>();
@@ -313,6 +318,41 @@ ORDER BY d.updated_at DESC, d.deal_number, ds.supplier";
                 ComponentsReceiptDate = Text(reader, 13),
                 ActualReceiptDate = Text(reader, 14),
                 DeliveryWeeks = Text(reader, 15),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Планы/факты поступления поставщиков неархивных сделок (плитка «Просрочено»).</summary>
+    public List<SupplierPlanRow> GetSupplierPlanRows()
+    {
+        const string sql = @"
+SELECT
+    d.id AS deal_id,
+    d.deal_number,
+    IFNULL(d.status, '') AS status,
+    ds.supplier,
+    IFNULL(ds.components_receipt_date, '') AS components_receipt_date,
+    IFNULL(ds.actual_receipt_date, '') AS actual_receipt_date
+FROM deal_suppliers ds
+JOIN deals d ON d.id = ds.deal_id
+WHERE IFNULL(d.archived, 0) = 0
+ORDER BY d.deal_number, ds.supplier";
+
+        var result = new List<SupplierPlanRow>();
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new SupplierPlanRow
+            {
+                DealId = reader.GetInt64(0),
+                DealNumber = Text(reader, 1),
+                Status = Text(reader, 2),
+                Supplier = Text(reader, 3),
+                ComponentsReceiptDate = Text(reader, 4),
+                ActualReceiptDate = Text(reader, 5),
             });
         }
         return result;

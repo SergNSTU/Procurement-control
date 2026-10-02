@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using ProcurementControl.Models;
 using ProcurementControl.ViewModels;
 using ProcurementControl.Services;
@@ -14,9 +16,14 @@ public partial class PurchaseView : UserControl
     private bool _savingDealCell;
     private bool _savingSupplierCell;
     private bool _allowDealCellEdit;
+    private bool _hasPendingColumnWidthSave;
+    private readonly DispatcherTimer _columnWidthSaveTimer;
     public PurchaseView()
     {
         InitializeComponent();
+        _columnWidthSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+        _columnWidthSaveTimer.Tick += (_, _) => SaveDealColumnWidths();
+        Unloaded += (_, _) => SaveDealColumnWidths();
     }
 
     private void DealsGrid_Loaded(object sender, RoutedEventArgs e)
@@ -42,7 +49,24 @@ public partial class PurchaseView : UserControl
 
     private void DealsGrid_ColumnWidthChanged(object? sender, EventArgs e)
     {
-        if (!_restoringDealColumns) GridColumnSettings.Save(DealsGrid, "ui.purchase.deals.column_widths");
+        if (_restoringDealColumns)
+        {
+            return;
+        }
+
+        _columnWidthSaveTimer.Stop();
+        _hasPendingColumnWidthSave = true;
+        _columnWidthSaveTimer.Start();
+    }
+
+    private void SaveDealColumnWidths()
+    {
+        _columnWidthSaveTimer.Stop();
+        if (!_restoringDealColumns && _hasPendingColumnWidthSave)
+        {
+            GridColumnSettings.Save(DealsGrid, "ui.purchase.deals.column_widths");
+            _hasPendingColumnWidthSave = false;
+        }
     }
 
     /// <summary>Открывает специальные редакторы дат по двойному щелчку.</summary>
@@ -125,6 +149,59 @@ public partial class PurchaseView : UserControl
         });
     }
 
+    /// <summary>
+    /// Флажок поставщика переключается первым щелчком, без двойного входа в правку:
+    /// отображаемый CheckBox колонки недоступен для мыши, поэтому ищем ячейку,
+    /// меняем поле по SortMemberPath и сразу сохраняем.
+    /// </summary>
+    private void SuppliersGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DataGrid grid || DataContext is not PurchaseViewModel viewModel ||
+            e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        var node = source;
+        while (node is not DataGridCell and not DataGrid and not null)
+        {
+            node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+        }
+
+        if (node is not DataGridCell cell || cell.Column is not DataGridCheckBoxColumn ||
+            cell.DataContext is not SupplierRow supplier)
+        {
+            return;
+        }
+
+        var field = cell.Column.SortMemberPath;
+        if (field is not nameof(SupplierRow.PaymentSubmitted) and not nameof(SupplierRow.Paid) and
+            not nameof(SupplierRow.InvoiceReceived) and not nameof(SupplierRow.InvoiceConfirmed) and
+            not nameof(SupplierRow.ErpSupplierSent) and not nameof(SupplierRow.ErpRogerSent))
+        {
+            return;
+        }
+
+        switch (field)
+        {
+            case nameof(SupplierRow.PaymentSubmitted): supplier.PaymentSubmitted = !supplier.PaymentSubmitted; break;
+            case nameof(SupplierRow.Paid): supplier.Paid = !supplier.Paid; break;
+            case nameof(SupplierRow.InvoiceReceived): supplier.InvoiceReceived = !supplier.InvoiceReceived; break;
+            case nameof(SupplierRow.InvoiceConfirmed): supplier.InvoiceConfirmed = !supplier.InvoiceConfirmed; break;
+            case nameof(SupplierRow.ErpSupplierSent): supplier.ErpSupplierSent = !supplier.ErpSupplierSent; break;
+            case nameof(SupplierRow.ErpRogerSent): supplier.ErpRogerSent = !supplier.ErpRogerSent; break;
+        }
+
+        e.Handled = true;
+        if (ItemsControl.ContainerFromElement(grid, source) is DataGridRow row)
+        {
+            row.IsSelected = true;
+            row.Focus();
+        }
+
+        viewModel.UpdateSupplierFlags(supplier);
+    }
+
     /// <summary>Сохраняет флажок поставщика сразу после щелчка.</summary>
     private void SuppliersGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
     {
@@ -132,7 +209,8 @@ public partial class PurchaseView : UserControl
             e.Row.Item is not SupplierRow supplier ||
             (e.Column is not DataGridCheckBoxColumn &&
              e.Column.SortMemberPath is not nameof(SupplierRow.DeliveryWeeks) and not nameof(SupplierRow.PiAmountUsd) and
-                 not nameof(SupplierRow.PiAmountCny) and not nameof(SupplierRow.PiAmountRub) and not nameof(SupplierRow.PaidAmount)) ||
+                 not nameof(SupplierRow.PiAmountCny) and not nameof(SupplierRow.PiAmountRub) and not nameof(SupplierRow.PaidAmount) and
+                 not nameof(SupplierRow.Comment)) ||
             DataContext is not PurchaseViewModel viewModel)
         {
             return;
@@ -157,7 +235,8 @@ public partial class PurchaseView : UserControl
         }
 
         var field = grid.CurrentCell.Column?.SortMemberPath;
-        if (field is not nameof(SupplierRow.InvoiceConfirmedDate) and not nameof(SupplierRow.ComponentsReceiptDate))
+        if (field is not nameof(SupplierRow.InvoiceConfirmedDate) and not nameof(SupplierRow.ComponentsReceiptDate) and
+            not nameof(SupplierRow.ActualReceiptDate))
         {
             return;
         }
@@ -166,14 +245,42 @@ public partial class PurchaseView : UserControl
         {
             nameof(SupplierRow.InvoiceConfirmedDate) => supplier.InvoiceConfirmedDate,
             nameof(SupplierRow.ComponentsReceiptDate) => supplier.ComponentsReceiptDate,
+            nameof(SupplierRow.ActualReceiptDate) => supplier.ActualReceiptDate,
             _ => null,
         };
         var title = field == nameof(SupplierRow.InvoiceConfirmedDate)
             ? "Дата подтверждения инвойса"
-            : "Плановое поступление";
+            : field == nameof(SupplierRow.ComponentsReceiptDate)
+                ? "Плановое поступление"
+                : "Фактическое поступление";
         var dialog = new DatePickerWindow(title, currentValue ?? string.Empty) { Owner = Window.GetWindow(this) };
         if (dialog.ShowDialog() == true)
             viewModel.UpdateSupplierDate(supplier, field!, dialog.SelectedDateText);
+    }
+
+    /// <summary>Клик по плитке метрик: показать список сделок, которые в неё входят.</summary>
+    private void MetricTile_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string tileKey } ||
+            DataContext is not PurchaseViewModel viewModel)
+        {
+            return;
+        }
+
+        var (title, lines) = viewModel.GetTileDetails(tileKey);
+        var window = new TileDetailsWindow(title, lines, (dealId, dealNumber) =>
+        {
+            if (dealId > 0)
+            {
+                viewModel.OpenDeal(dealId);
+            }
+            else
+            {
+                viewModel.OpenDealByNumber(dealNumber);
+            }
+        })
+        { Owner = Window.GetWindow(this) };
+        window.ShowDialog();
     }
 
     private void PickDealReminderDateClick(object sender, RoutedEventArgs e)

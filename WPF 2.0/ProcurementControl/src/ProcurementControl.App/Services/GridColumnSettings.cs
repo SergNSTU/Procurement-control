@@ -20,7 +20,7 @@ public static class GridColumnSettings
             foreach (var column in grid.Columns)
                 if (widths.TryGetValue(Key(column), out var width) && width >= 30) column.Width = width;
         }
-        catch { }
+        catch (Exception ex) { ErrorLog.Append("grid", ex); }
     }
 
     public static void Save(DataGrid grid, string settingKey)
@@ -30,7 +30,7 @@ public static class GridColumnSettings
             var values = grid.Columns.Select(column => Key(column) + "=" + Math.Round(column.ActualWidth).ToString(CultureInfo.InvariantCulture));
             PurchaseWriteRepository.SetSetting(settingKey, string.Join(";", values));
         }
-        catch { }
+        catch (Exception ex) { ErrorLog.Append("grid", ex); }
     }
 
     private static string Key(DataGridColumn column) => !string.IsNullOrWhiteSpace(column.SortMemberPath)

@@ -53,50 +53,73 @@
             <TabItem Header="Статистика">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <Button Grid.Row="0" Content="Пересчитать статистику" Width="170" Height="28" HorizontalAlignment="Left"
-                            Style="{StaticResource SecondaryButtonStyle}" Command="{Binding LoadStatisticsCommand}"/>
+                    <WrapPanel Grid.Row="0">
+                        <Button Content="Пересчитать статистику" Width="170" Height="28" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding LoadStatisticsCommand}"/>
+                        <TextBlock Text="Сделка:" Style="{StaticResource FieldLabel}" Margin="14,0,7,0"/>
+                        <TextBox Width="210" Text="{Binding DealSearch, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Экспорт в Excel" Width="130" Height="28" Margin="10,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Command="{Binding ExportOverviewCommand}"/>
+                        <TextBlock Text="Цены сравниваются только внутри сделки и позиции; в сравнении участвуют USD." Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    </WrapPanel>
                     <Grid Grid.Row="1" Margin="0,8,0,0">
-                        <Grid.RowDefinitions><RowDefinition Height="65*"/><RowDefinition Height="6"/><RowDefinition Height="35*"/></Grid.RowDefinitions>
-                    <DataGrid Grid.Row="0" ItemsSource="{Binding StatisticsRows}" AutoGenerateColumns="False" IsReadOnly="True">
+                        <Grid.RowDefinitions><RowDefinition Height="55*"/><RowDefinition Height="6"/><RowDefinition Height="45*"/></Grid.RowDefinitions>
+                    <DataGrid Grid.Row="0" ItemsSource="{Binding OverviewRows}" SelectedItem="{Binding SelectedOverview, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="170"/>
-                            <DataGridTextColumn Header="Оценка" Binding="{Binding ScoreText}" Width="80"/>
-                            <DataGridTextColumn Header="Сравнений" Binding="{Binding ComparisonsText}" Width="90"/>
-                            <DataGridTextColumn Header="Конкурентность цены" Binding="{Binding PriceCompetitivenessText}" Width="145"/>
-                            <DataGridTextColumn Header="Доля лучшей цены" Binding="{Binding BestPriceRateText}" Width="130"/>
-                            <DataGridTextColumn Header="Частота ответа" Binding="{Binding ResponseRateText}" Width="120"/>
-                            <DataGridTextColumn Header="Средний срок" Binding="{Binding AverageLeadText}" Width="105"/>
-                            <DataGridTextColumn Header="Доверие" Binding="{Binding Confidence}" Width="90"/>
+                            <DataGridTextColumn Header="Когорты" Binding="{Binding CohortsText}" Width="70"/>
+                            <DataGridTextColumn Header="Позиции" Binding="{Binding PositionsText}" Width="70"/>
+                            <DataGridTextColumn Header="PN" Binding="{Binding UniquePnText}" Width="55"/>
+                            <DataGridTextColumn Header="Ответы" Binding="{Binding ResponseText}" Width="105"/>
+                            <DataGridTextColumn Header="Победы" Binding="{Binding WinsText}" Width="105"/>
+                            <DataGridTextColumn Header="Лучшие цены" Binding="{Binding BestPriceText}" Width="120"/>
+                            <DataGridTextColumn Header="Средн. откл." Binding="{Binding MeanPriceDeviationText}" Width="90"/>
+                            <DataGridTextColumn Header="Медиана откл." Binding="{Binding MedianPriceDeviationText}" Width="100"/>
+                            <DataGridTextColumn Header="Средн. срок" Binding="{Binding MeanLeadText}" Width="90"/>
+                            <DataGridTextColumn Header="Медиана срока" Binding="{Binding MedianLeadText}" Width="105"/>
+                            <DataGridTextColumn Header="Лучшие сроки" Binding="{Binding BestLeadText}" Width="110"/>
+                            <DataGridTextColumn Header="Выборка" Binding="{Binding CoverageText}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
                     <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" Background="{StaticResource LineBrush}"/>
-                    <DataGrid Grid.Row="2" ItemsSource="{Binding MonthlyTrend}" AutoGenerateColumns="False" IsReadOnly="True">
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <TextBlock Text="{Binding ResponseAuditText}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding ResponseAuditRows}" AutoGenerateColumns="False" IsReadOnly="True"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Месяц" Binding="{Binding Month}" Width="100"/>
-                            <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="170"/>
-                            <DataGridTextColumn Header="Сравнений" Binding="{Binding ComparisonsText}" Width="90"/>
-                            <DataGridTextColumn Header="Конкурентность цены" Binding="{Binding PriceText}" Width="150"/>
-                            <DataGridTextColumn Header="Лучшая цена" Binding="{Binding BestText}" Width="120"/>
+                            <DataGridTextColumn Header="Сделка" Binding="{Binding DealNumber}" Width="180"/>
+                            <DataGridTextColumn Header="Пакет" Binding="{Binding BatchId}" Width="65"/>
+                            <DataGridTextColumn Header="Источник" Binding="{Binding SourceKind}" Width="100"/>
+                            <DataGridTextColumn Header="Позиция" Binding="{Binding PositionKey}" Width="190"/>
+                            <DataGridTextColumn Header="PN" Binding="{Binding PN}" Width="150"/>
+                            <DataGridTextColumn Header="Производитель" Binding="{Binding Manufacturer}" Width="150"/>
+                            <DataGridTextColumn Header="Дал квоту" Binding="{Binding HasQuoteText}" Width="85"/>
+                            <DataGridTextColumn Header="Основание" Binding="{Binding CalculationBasis}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
+                    </Grid>
                     </Grid>
                 </Grid>
             </TabItem>
             <TabItem Header="Сборки">
                 <Grid Margin="0,10,0,0">
-                    <Grid.RowDefinitions><RowDefinition Height="45*"/><RowDefinition Height="6"/><RowDefinition Height="55*"/></Grid.RowDefinitions>
-                    <DataGrid Grid.Row="0" ItemsSource="{Binding Batches}" SelectedItem="{Binding SelectedBatch, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="45*"/><RowDefinition Height="6"/><RowDefinition Height="55*"/></Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Номер сделки:" Style="{StaticResource FieldLabel}" Margin="0,0,8,0"/>
+                        <TextBox Width="240" Text="{Binding BatchSearch, UpdateSourceTrigger=PropertyChanged}"/>
+                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredBatches}" SelectedItem="{Binding SelectedBatch, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Дата" Binding="{Binding CreatedAt}" Width="145"/>
                             <DataGridTextColumn Header="Источник" Binding="{Binding SourceKind}" Width="115"/>
                             <DataGridTextColumn Header="Качество" Binding="{Binding DataQuality}" Width="100"/>
                             <DataGridTextColumn Header="Позиций" Binding="{Binding PositionCount}" Width="75"/>
                             <DataGridTextColumn Header="Квот" Binding="{Binding QuoteCount}" Width="65"/>
-                            <DataGridTextColumn Header="RFQ" Binding="{Binding FileName}" Width="*"/>
+                            <DataGridTextColumn Header="Сделка" Binding="{Binding DealDisplay}" Width="*"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch" Background="{StaticResource LineBrush}"/>
-                    <DataGrid Grid.Row="2" ItemsSource="{Binding BatchQuotes}" AutoGenerateColumns="False" IsReadOnly="True">
+                    <GridSplitter Grid.Row="2" Height="6" HorizontalAlignment="Stretch" Background="{StaticResource LineBrush}"/>
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding BatchQuotes}" AutoGenerateColumns="False" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Позиция" Binding="{Binding RfqValue}" Width="180"/>
                             <DataGridTextColumn Header="PN" Binding="{Binding PN}" Width="140"/>

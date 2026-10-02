@@ -1,5 +1,6 @@
 ﻿param(
     [switch]$UiSmokeTest,
+    [switch]$NoQuickCapture,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
 )
@@ -82,6 +83,13 @@ try {
     if ($UiSmokeTest) {
         & $MainScript -UiSmokeTest @RemainingArgs
     } else {
+        if (-not $NoQuickCapture) {
+            $agentPath = Join-Path $AppDir 'QuickCaptureAgent.ps1'
+            if (Test-Path -LiteralPath $agentPath -PathType Leaf) {
+                $agentArgs = '-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "{0}" -ParentPid {1}' -f $agentPath, $PID
+                Start-Process -FilePath 'powershell.exe' -ArgumentList $agentArgs -WindowStyle Hidden | Out-Null
+            }
+        }
         & $MainScript @RemainingArgs
     }
     exit $LASTEXITCODE

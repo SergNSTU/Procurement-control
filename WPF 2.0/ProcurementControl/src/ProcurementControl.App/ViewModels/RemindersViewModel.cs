@@ -3,6 +3,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ProcurementControl.Models;
+using ProcurementControl.Navigation;
 using ProcurementControl.Services;
 using ProcurementControl.Views;
 
@@ -80,29 +81,84 @@ public partial class RemindersViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Порт $btnDoneReminder (RRFQComparer.ps1, строки 4965-4983): для напоминания сделки —
-    /// очистка reminder_date, для ручного — статус Done.
+    /// Двойной щелчок по пункту: перейти в «Контроль закупки» и выделить сделку
+    /// пункта — как ветка deal из Open-NotificationTarget (строки 747-763).
     /// </summary>
-    [RelayCommand]
-    private void DoneReminder()
+    public void OpenDealFromReminder()
     {
         try
         {
-            var item = SelectedItem ?? throw new InvalidOperationException("Выберите ручное напоминание.");
-            if (item.Source == "deal")
+            var item = SelectedItem ?? throw new InvalidOperationException("Выберите напоминание.");
+            if (item.DealId <= 0)
             {
-                PurchaseWriteRepository.ClearDealReminder(item.DealId);
+                throw new InvalidOperationException("У этого напоминания нет связанной сделки.");
             }
-            else if (item.ReminderId > 0)
+
+            if (Application.Current.MainWindow?.DataContext is MainViewModel main)
             {
-                PurchaseWriteRepository.SetReminderDone(item.ReminderId, done: true);
+                main.Navigate(AppPage.Purchase);
+                (main.CurrentViewModel as PurchaseViewModel)?.OpenDeal(item.DealId);
             }
-            else
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Напоминания");
+        }
+    }
+
+    /// <summary>
+    /// Порт $btnDoneReminder (RRFQComparer.ps1, строки 4965-4983): для напоминания сделки —
+    /// очистка reminder_date, для ручного — статус Done. Работает и с несколькими
+    /// выбранными строками: один вопрос, закрытие по каждой.
+    /// </summary>
+    [RelayCommand]
+    private void DoneReminder()
+        => DoneSelected(SelectedItem is null ? Array.Empty<ActionItemRow>() : new[] { SelectedItem });
+
+    public void DoneSelected(System.Collections.IList rows)
+    {
+        try
+        {
+            var items = rows.OfType<ActionItemRow>().ToList();
+            if (items.Count == 0)
             {
-                throw new InvalidOperationException("Выберите ручное напоминание.");
+                throw new InvalidOperationException("Выберите напоминание.");
+            }
+
+            // Авто-пункты не имеют ReminderId и сделочной даты — закрывать «Готово» их нельзя.
+            var closable = items.Where(i => i.Source == "deal" || i.ReminderId > 0).ToList();
+            if (closable.Count == 0)
+            {
+                throw new InvalidOperationException("Кнопка «Готово» закрывает напоминания сделок и ручные; автоматические убираются удалением.");
+            }
+
+            if (closable.Count > 1)
+            {
+                var answer = MessageBox.Show(
+                    "Отметить выполненными: " + closable.Count + "?",
+                    "Напоминания", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            foreach (var item in closable)
+            {
+                if (item.Source == "deal")
+                {
+                    PurchaseWriteRepository.ClearDealReminder(item.DealId);
+                }
+                else
+                {
+                    PurchaseWriteRepository.SetReminderDone(item.ReminderId, done: true);
+                }
             }
 
             Load();
+            ToastService.Show(
+                closable.Count == 1 ? "Напоминание закрыто" : "Закрыто напоминаний: " + closable.Count,
+                ToastKind.Success);
         }
         catch (Exception ex)
         {
@@ -126,14 +182,14 @@ public partial class RemindersViewModel : ObservableObject
                 throw new InvalidOperationException("Выберите автоматическое напоминание по поступлению.");
             }
 
-            // Аналог Show-DatePickerDialog: ввод даты в формате дд.мм.гггг.
-            var dialog = new InputDialogWindow("Поступление", "Фактическая дата поступления (дд.мм.гггг)", DateTime.Now.ToString("dd.MM.yyyy"));
-            if (dialog.ShowDialog() != true)
+            // Аналог Show-DatePickerDialog: календарь вместо текстового ввода даты.
+            var dialog = new DatePickerWindow("Фактическая дата поступления", DateTime.Now.ToString("dd.MM.yyyy"));
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.SelectedDateText))
             {
                 return;
             }
 
-            var date = PurchaseFormatting.ParseDate(dialog.Value);
+            var date = PurchaseFormatting.ParseDate(dialog.SelectedDateText);
             if (date is null)
             {
                 throw new InvalidOperationException("Фактическая дата поступления должна быть в формате дд.мм.гггг.");
@@ -151,25 +207,26 @@ public partial class RemindersViewModel : ObservableObject
 
     /// <summary>
     /// Порт $btnNewReminder (RRFQComparer.ps1, строки 4991-5001). В оригинале сделка и поставщик брались из сеток закупки;
-    /// здесь подставляются из выбранного пункта, если он есть.
+    /// здесь подставляются из выбранного пункта, если он есть. Вместо двух текстовых
+    /// диалогов — окно NewReminderWindow с календарём.
     /// </summary>
     [RelayCommand]
     private void NewReminder()
     {
         try
         {
-            var titleDialog = new InputDialogWindow("Новое напоминание", "Что нужно сделать?");
-            if (titleDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(titleDialog.Value))
+            var context = SelectedItem is not null && (SelectedItem.DealId > 0 || SelectedItem.SupplierId > 0)
+                ? "Новая запись будет привязана к выбранному пункту: " + SelectedItem.Title
+                : string.Empty;
+            var window = new NewReminderWindow(context) { Owner = Application.Current?.MainWindow };
+            if (window.ShowDialog() != true)
             {
                 return;
             }
 
-            var dueDialog = new InputDialogWindow("Новое напоминание", "Дата (можно пусто, формат дд.мм.гггг)");
-            var due = dueDialog.ShowDialog() == true ? dueDialog.Value : string.Empty;
-
             PurchaseWriteRepository.SaveReminder(
-                titleDialog.Value,
-                due,
+                window.ReminderTitle,
+                window.DueDateText,
                 SelectedItem?.DealId ?? 0,
                 SelectedItem?.SupplierId ?? 0,
                 "manual");
@@ -182,39 +239,104 @@ public partial class RemindersViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Порт $remindersDeleteMenuItem (RRFQComparer.ps1, строки 4949-4962): ручное напоминание уходит в корзину.
+    /// Порт $remindersDeleteMenuItem (RRFQComparer.ps1, строки 4949-4962): напоминания
+    /// уходят в корзину. Работает и с несколькими выбранными строками: один вопрос,
+    /// удаление по каждой — авто-пункты по ключу, сделочные очисткой даты, ручные по id.
     /// </summary>
     [RelayCommand]
     private void DeleteReminder()
+        => DeleteSelected(SelectedItem is null ? Array.Empty<ActionItemRow>() : new[] { SelectedItem });
+
+    public void DeleteSelected(System.Collections.IList rows)
     {
         try
         {
-            var item = SelectedItem;
-            if (item is null) throw new InvalidOperationException("Выберите напоминание.");
+            var items = rows.OfType<ActionItemRow>().ToList();
+            if (items.Count == 0)
+            {
+                throw new InvalidOperationException("Выберите напоминание.");
+            }
 
-            var answer = MessageBox.Show(
-                "Переместить выбранное напоминание в корзину?",
-                "Корзина", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            var question = items.Count == 1
+                ? "Переместить выбранное напоминание в корзину?"
+                : "Переместить в корзину: " + items.Count + "?";
+            var answer = MessageBox.Show(question, "Корзина", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (answer != MessageBoxResult.Yes)
             {
                 return;
             }
 
-            // Автоматические строки не имеют ReminderId. Удаляем их по ключу,
-            // даже если источник строки не был заполнен старой версией данных.
-            if (item.Source == "auto" || (item.ReminderId <= 0 && item.Source != "deal"))
-                PurchaseWriteRepository.RemoveAutomaticReminder(item.DealId, item.SupplierId, item.Title);
-            else if (item.Source == "deal")
-                PurchaseWriteRepository.ClearDealReminder(item.DealId);
-            else if (item.ReminderId > 0)
-                PurchaseWriteRepository.RemoveReminder(item.ReminderId);
-            else
-                throw new InvalidOperationException("Выберите напоминание.");
+            foreach (var item in items)
+            {
+                DeleteReminderCore(item);
+            }
+
+            SelectedItem = null;
             Load();
+            ToastService.Show("Перемещено в корзину: " + items.Count, ToastKind.Info);
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "Напоминания");
+        }
+    }
+
+    private void DeleteReminderCore(ActionItemRow item)
+    {
+        // Автоматические строки не имеют ReminderId. Удаляем их по ключу,
+        // даже если источник строки не был заполнен старой версией данных.
+        if (item.Source == "auto" || (item.ReminderId <= 0 && item.Source != "deal"))
+        {
+            PurchaseWriteRepository.RemoveAutomaticReminder(item.DealId, item.SupplierId, item.Title);
+        }
+        else if (item.Source == "deal")
+        {
+            PurchaseWriteRepository.ClearDealReminder(item.DealId);
+        }
+        else if (item.ReminderId > 0)
+        {
+            PurchaseWriteRepository.RemoveReminder(item.ReminderId);
+        }
+        else
+        {
+            throw new InvalidOperationException("Выберите напоминание.");
+        }
+    }
+
+    /// <summary>
+    /// Перенос выбранного напоминания в календарь Outlook: встреча-напоминание
+    /// на 9:00 даты пункта (строку запланированной интеграции см. в «Инструкции»).
+    /// </summary>
+    [RelayCommand]
+    private void ReminderToOutlook()
+    {
+        try
+        {
+            var item = SelectedItem ?? throw new InvalidOperationException("Выберите напоминание.");
+            if (!OutlookService.IsAvailable)
+            {
+                throw new InvalidOperationException("Outlook не найден на этом компьютере.");
+            }
+
+            var date = PurchaseFormatting.ParseDate(item.DueDate);
+            if (date is null)
+            {
+                var dialog = new DatePickerWindow("Дата напоминания", DateTime.Now.ToString("dd.MM.yyyy"));
+                if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.SelectedDateText))
+                {
+                    return;
+                }
+
+                date = PurchaseFormatting.ParseDate(dialog.SelectedDateText)
+                    ?? throw new InvalidOperationException("Дата должна быть в формате дд.мм.гггг.");
+            }
+
+            OutlookService.CreateCalendarReminder(item.Title, item.Title, date.Value);
+            ToastService.Show("Напоминание создано в Outlook", ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Напоминание в Outlook");
         }
     }
 

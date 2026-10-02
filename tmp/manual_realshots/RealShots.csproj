@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ProcurementControl.App">
+      <HintPath>..\..\WPF 2.0\ProcurementControl\src\ProcurementControl.App\bin\Release\net8.0-windows\win-x64\ProcurementControl.App.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -29,7 +29,7 @@ public static class CompelRrfqExporter
         }
         finally
         {
-            if (workbook is not null) { try { workbook.Close(false); } catch { } }
+            if (workbook is not null) { try { workbook.Close(false); } catch (Exception ex) { ErrorLog.Append("excel", ex); } }
             RrfqExcel.Release(sheet); RrfqExcel.Release(workbook); RrfqExcel.CloseExcel(excel);
         }
     }

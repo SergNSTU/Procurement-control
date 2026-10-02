@@ -8,12 +8,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>ProcurementControl</RootNamespace>
     <AssemblyName>ProcurementControl.App</AssemblyName>
+    <!-- Номер версии показывается в Настройках; повышать при каждой публикации. -->
+    <Version>2.0.15</Version>
     <ApplicationIcon>Assets\ProcurementControl.ico</ApplicationIcon>
+    <!-- Start-WPF.bat запускает portable-сборку без установленного .NET. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\ProcurementControl.ico" />
     <Resource Include="Assets\UnirecMark.png" />
+    <!-- Подпись в письмах поставщикам: файл нужен на диске для вложения в черновик Outlook. -->
+    <Content Include="Assets\SignatureHarizin.png" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
   </ItemGroup>

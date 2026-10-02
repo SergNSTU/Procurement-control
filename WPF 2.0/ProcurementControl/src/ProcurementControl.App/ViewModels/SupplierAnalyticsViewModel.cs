@@ -17,6 +17,8 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
 
     [ObservableProperty] private string _manufacturerSearch = string.Empty;
     [ObservableProperty] private string _supplierSearch = string.Empty;
+    [ObservableProperty] private string _dealSearch = string.Empty;
+    [ObservableProperty] private string _batchSearch = string.Empty;
     [ObservableProperty] private string _dateFromText = string.Empty;
     [ObservableProperty] private string _dateToText = string.Empty;
     [ObservableProperty] private int _selectedTabIndex;
@@ -26,13 +28,18 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
     [ObservableProperty] private ManufacturerAliasRow? _selectedAlias;
     [ObservableProperty] private AnalyticsManufacturerOption? _selectedTargetManufacturer;
     [ObservableProperty] private AnalyticsBatchRow? _selectedBatch;
+    [ObservableProperty] private SupplierOverviewRow? _selectedOverview;
+    [ObservableProperty] private string _responseAuditText = "Выберите поставщика, чтобы проверить расчёт ответов.";
 
     public ObservableCollection<AnalyticsManufacturerOption> Manufacturers { get; } = new();
     public ObservableCollection<SupplierRecommendationRow> Recommendations { get; } = new();
     public ObservableCollection<SupplierRecommendationRow> StatisticsRows { get; } = new();
+    public ObservableCollection<SupplierOverviewRow> OverviewRows { get; } = new();
+    public ObservableCollection<SupplierResponseAuditRow> ResponseAuditRows { get; } = new();
     public ObservableCollection<AnalyticsMonthlyRow> MonthlyTrend { get; } = new();
     public ObservableCollection<ManufacturerAliasRow> Aliases { get; } = new();
     public ObservableCollection<AnalyticsBatchRow> Batches { get; } = new();
+    public ObservableCollection<AnalyticsBatchRow> FilteredBatches { get; } = new();
     public ObservableCollection<AnalyticsBatchQuoteRow> BatchQuotes { get; } = new();
 
     public SupplierAnalyticsViewModel()
@@ -54,6 +61,9 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
         if (_service is null || value is null) return;
         foreach (var row in _service.GetBatchQuotes(value.Id)) BatchQuotes.Add(row);
     }
+
+    partial void OnBatchSearchChanged(string value) => ApplyBatchFilter();
+    partial void OnSelectedOverviewChanged(SupplierOverviewRow? value) => LoadResponseAudit(value);
 
     [RelayCommand]
     private void Refresh()
@@ -86,15 +96,36 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
     {
         try
         {
+            // Импорт документов меняет реальную БД из другой страницы. Перед
+            // расчётом открываем свежий снимок, а не используем данные момента
+            // открытия вкладки аналитики.
+            Load();
             if (_service is null) throw new InvalidOperationException("Данные ещё не загружены.");
             StatisticsRows.Clear();
+            OverviewRows.Clear();
+            ResponseAuditRows.Clear();
+            ResponseAuditText = "Выберите поставщика, чтобы проверить расчёт ответов.";
             MonthlyTrend.Clear();
-            foreach (var row in _service.GetStatistics(ManufacturerSearch, DateForSort(DateFromText), DateForSort(DateToText))
-                .Where(row => string.IsNullOrWhiteSpace(SupplierSearch) || row.Supplier.Contains(SupplierSearch.Trim(), StringComparison.OrdinalIgnoreCase))) StatisticsRows.Add(row);
-            foreach (var row in _service.GetMonthlyTrend(ManufacturerSearch, SupplierSearch, DateForSort(DateFromText), DateForSort(DateToText))) MonthlyTrend.Add(row);
+            var filter = CurrentAnalyticsFilter();
+            foreach (var row in _service.GetSupplierOverview(filter)) OverviewRows.Add(row);
+            foreach (var row in _service.GetMonthlyTrend(ManufacturerSearch, SupplierSearch, DateForSort(DateFromText), DateForSort(DateToText), DealSearch)) MonthlyTrend.Add(row);
             SummaryText = string.IsNullOrWhiteSpace(ManufacturerSearch)
-                ? $"Общий рейтинг по {StatisticsRows.Count} поставщикам."
-                : $"Статистика производителя «{ManufacturerSearch.Trim()}»: {StatisticsRows.Count} поставщиков.";
+                ? $"Прозрачный обзор по {OverviewRows.Count} поставщикам. Оценка 0–100 остаётся на вкладке «Рекомендация»."
+                : $"Обзор производителя «{ManufacturerSearch.Trim()}»: {OverviewRows.Count} поставщиков.";
+            ErrorMessage = string.Empty;
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    [RelayCommand]
+    private void ExportOverview()
+    {
+        try
+        {
+            if (OverviewRows.Count == 0) LoadStatistics();
+            if (OverviewRows.Count == 0) throw new InvalidOperationException("Нет строк для экспорта.");
+            var path = SupplierOverviewExporter.ExportToExcel(OverviewRows.ToList());
+            SummaryText = "Обзор экспортирован: " + path;
             ErrorMessage = string.Empty;
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
@@ -169,9 +200,34 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
             foreach (var alias in _service.GetAliasRows()) Aliases.Add(alias);
             Batches.Clear();
             foreach (var batch in _service.GetBatches()) Batches.Add(batch);
+            ApplyBatchFilter();
             ErrorMessage = string.Empty;
         }
         catch (Exception ex) { ErrorMessage = "Не удалось прочитать статистику: " + ex.Message; }
+    }
+
+    private void ApplyBatchFilter()
+    {
+        var selectedId = SelectedBatch?.Id;
+        FilteredBatches.Clear();
+        var search = BatchSearch.Trim();
+        foreach (var batch in Batches.Where(batch => string.IsNullOrWhiteSpace(search)
+                     || batch.DealNumber.Contains(search, StringComparison.OrdinalIgnoreCase)))
+            FilteredBatches.Add(batch);
+        SelectedBatch = FilteredBatches.FirstOrDefault(batch => batch.Id == selectedId);
+    }
+
+    private AnalyticsFilter CurrentAnalyticsFilter()
+        => new(DateForSort(DateFromText), DateForSort(DateToText), ManufacturerSearch, SupplierSearch, DealSearch);
+
+    private void LoadResponseAudit(SupplierOverviewRow? row)
+    {
+        ResponseAuditRows.Clear();
+        if (_service is null || row is null) return;
+        foreach (var item in _service.GetSupplierResponseAudit(row.Supplier, CurrentAnalyticsFilter())) ResponseAuditRows.Add(item);
+        ResponseAuditText = ResponseAuditRows.Count == 0
+            ? $"Для «{row.Supplier}» нет позиций, включённых в частоту ответа. Неполные PI и ручные импорты исключены."
+            : $"Проверка ответов «{row.Supplier}»: {ResponseAuditRows.Count(item => item.HasQuote)} из {ResponseAuditRows.Count} позиций. Столбец «Основание» показывает тип знаменателя.";
     }
 
     private void RefreshInBackground()

@@ -59,9 +59,20 @@ public partial class TasksView : UserControl
     {
         if (sender is not DataGrid grid || e.OriginalSource is not DependencyObject source) return;
         if (ItemsControl.ContainerFromElement(grid, source) is not DataGridRow row) return;
+        // При множественном выборе правый клик выделяет только строку под курсором:
+        // пункты меню действуют на одну задачу.
+        grid.SelectedItems.Clear();
         row.IsSelected = true;
         row.Focus();
     }
+
+    /// <summary>Массовое завершение: один диалог статуса/этапа на все выбранные строки.</summary>
+    private void CompleteClick(object sender, RoutedEventArgs e)
+        => (DataContext as TasksViewModel)?.CompleteSelected(TasksGrid.SelectedItems);
+
+    /// <summary>Массовое удаление: один вопрос, все выбранные строки уходят в корзину.</summary>
+    private void DeleteClick(object sender, RoutedEventArgs e)
+        => (DataContext as TasksViewModel)?.DeleteSelected(TasksGrid.SelectedItems);
 
     /// <summary>Сохраняет текст и выбранные значения списков сразу после изменения ячейки.</summary>
     private void TasksGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)

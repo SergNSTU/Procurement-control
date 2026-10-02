@@ -78,37 +78,47 @@
             <RowDefinition Height="320"/>
         </Grid.RowDefinitions>
 
-        <!-- Карточки метрик -->
+        <!-- Карточки метрик: клик по плитке — список сделок, которые в неё входят -->
         <WrapPanel Grid.Row="0">
-            <Border Style="{StaticResource MetricTile}" Background="{StaticResource InfoBrush}">
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource InfoBrush}"
+                    Cursor="Hand" Tag="active" ToolTip="Клик — показать список"
+                    MouseLeftButtonUp="MetricTile_Click">
                 <StackPanel>
                     <TextBlock Style="{StaticResource TileCaption}" Text="Активные сделки"/>
                     <TextBlock Style="{StaticResource TileValue}" Text="{Binding ActiveCount}"/>
                     <TextBlock Style="{StaticResource TileHint}" Text="Активные, отслеживание, Китай и задачи"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource MetricTile}" Background="{StaticResource DangerBrush}">
-                <StackPanel>
-                    <TextBlock Style="{StaticResource TileCaption}" Text="Просрочено"/>
-                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding OverdueCount}"/>
-                    <TextBlock Style="{StaticResource TileHint}" Text="Нужна реакция"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource MetricTile}" Background="{StaticResource WarnBrush}">
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource WarnBrush}"
+                    Cursor="Hand" Tag="tasks" ToolTip="Клик — показать список"
+                    MouseLeftButtonUp="MetricTile_Click">
                 <StackPanel>
                     <TextBlock Style="{StaticResource TileCaption}" Text="Задачи в работе"/>
                     <TextBlock Style="{StaticResource TileValue}" Text="{Binding WorkAndPaymentTaskCount}"/>
                     <TextBlock Style="{StaticResource TileHint}" Text="В работе и подано в оплату"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource MetricTile}" Background="{StaticResource AttentionBrush}">
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource AttentionBrush}"
+                    Cursor="Hand" Tag="expecting" ToolTip="Клик — показать список"
+                    MouseLeftButtonUp="MetricTile_Click">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource TileCaption}" Text="Требуют внимания"/>
-                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding AttentionCount}"/>
-                    <TextBlock Style="{StaticResource TileHint}" Text="Нужна ручная проверка"/>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="Ожидаем поступления"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding ExpectingReceiptCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="Есть план, ждём факт"/>
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource MetricTile}" Background="{StaticResource SurfaceAltBrush}">
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource DangerBrush}"
+                    Cursor="Hand" Tag="overdue" ToolTip="Клик — показать список"
+                    MouseLeftButtonUp="MetricTile_Click">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource TileCaption}" Text="Просрочено"/>
+                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding OverdueCount}"/>
+                    <TextBlock Style="{StaticResource TileHint}" Text="План прошёл, факта нет"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricTile}" Background="{StaticResource SurfaceAltBrush}"
+                    Cursor="Hand" Tag="reminders" ToolTip="Клик — показать список"
+                    MouseLeftButtonUp="MetricTile_Click">
                 <StackPanel>
                     <TextBlock Style="{StaticResource TileCaption}" Text="Количество напоминаний"/>
                     <TextBlock Style="{StaticResource TileValue}" Text="{Binding ReminderCount}"/>
@@ -125,6 +135,18 @@
             <ComboBox ItemsSource="{Binding Filters}"
                       SelectedItem="{Binding SelectedFilter}"
                       Width="180"/>
+            <!-- Тестовая фича: авто-импорт Excel-вложений поставщиков по активным сделкам -->
+            <CheckBox Content="Импорт RRFQ из почты"
+                      IsChecked="{Binding MailImportEnabled, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      Margin="14,0,0,0"
+                      ToolTip="Смотреть ящик comp@npkexpert.ru: письма поставщиков с номером активной сделки и Excel-вложением попадают в документы сделки как RRFQ"/>
+            <!-- Авто-сверка файла прихода со склада (письма «CE CT WE daily update») -->
+            <CheckBox Content="Импорт приходов со склада"
+                      IsChecked="{Binding WarehouseImportEnabled, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      Margin="14,0,0,0"
+                      ToolTip="Раз в 2 часа забирать файл прихода на склад из папки «CE CT WE»: сверять заказы из комментариев поставщиков, заполнять «Факт поступл.», предупреждать о просрочках"/>
             <Button Content="Новая сделка"
                     Style="{StaticResource PrimaryButtonStyle}"
                     Command="{Binding NewDealCommand}"
@@ -141,6 +163,8 @@
                         <MenuItem Header="{Binding ArchiveButtonText}" Command="{Binding ToggleArchiveCommand}"/>
                         <MenuItem Header="Удалить сделку" Command="{Binding DeleteDealCommand}"/>
                         <Separator/>
+                        <MenuItem Header="Проверить почту поставщиков" Command="{Binding CheckMailCommand}"/>
+                        <MenuItem Header="Проверить приход со склада" Command="{Binding CheckWarehouseCommand}"/>
                         <MenuItem Header="Обновить список" Command="{Binding ReloadCommand}"/>
                     </ContextMenu>
                 </Button.ContextMenu>
@@ -272,9 +296,9 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellEditingTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Отслеживание" Binding="{Binding TrackingStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="TrackingStatus" Width="120" CellStyle="{StaticResource EditableDealCellStyle}"/>
                         <DataGridTextColumn Header="Комментарий" SortMemberPath="Comment" Width="130"
                                             Binding="{Binding Comment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" CellStyle="{StaticResource EditableDealCellStyle}"/>
+                        <DataGridTextColumn Header="Отслеживание" Binding="{Binding TrackingStatus, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="TrackingStatus" Width="120" CellStyle="{StaticResource EditableDealCellStyle}"/>
                         <DataGridTemplateColumn Header="Поступление комплектации" Width="180" SortMemberPath="CompletionReceiptDate" IsReadOnly="True" CellStyle="{StaticResource DoubleClickDealCellStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -356,8 +380,23 @@
                     </DockPanel>
                     <TextBlock Grid.Column="9" Style="{StaticResource FieldLabel}" Text="Комментарий:"/>
                     <TextBox Grid.Column="10" MinWidth="180" Text="{Binding EditComment, UpdateSourceTrigger=PropertyChanged}"/>
-                    <Button Grid.Column="12" Content="Сохранить" Style="{StaticResource PrimaryButtonStyle}"
-                            Command="{Binding SaveDealCommand}" Height="30"/>
+                    <StackPanel Grid.Column="12">
+                        <Button Content="Сохранить" Style="{StaticResource PrimaryButtonStyle}"
+                                Command="{Binding SaveDealCommand}" Height="30"/>
+                        <TextBlock Text="Несохранённые изменения" Foreground="{StaticResource WarnTextBrush}"
+                                   FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasUnsavedChanges}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
                 </Grid>
             </Border>
 
@@ -383,7 +422,25 @@
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
                                   MouseDoubleClick="SuppliersGrid_MouseDoubleClick"
+                                  PreviewMouseLeftButtonDown="SuppliersGrid_PreviewMouseLeftButtonDown"
                                   CellEditEnding="SuppliersGrid_CellEditEnding">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLate}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource DangerBrush}"/>
+                                            <Setter Property="ToolTip"
+                                                    Value="Поставщик опоздал: план поступления прошёл без факта или факт позже плана."/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <!-- Прозрачные ячейки, чтобы был виден фон строки при опоздании -->
+                            <DataGrid.CellStyle>
+                                <Style TargetType="DataGridCell" BasedOn="{StaticResource AppGridCellStyle}">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                </Style>
+                            </DataGrid.CellStyle>
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="130" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Сумма PI $" Binding="{Binding PiAmountUsd, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="PiAmountUsd" Width="92"/>
@@ -391,16 +448,22 @@
                                 <DataGridTextColumn Header="Сумма RUB" Binding="{Binding PiAmountRub, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="PiAmountRub" Width="92"/>
                                 <DataGridTextColumn Header="Оплачено" Binding="{Binding PaidAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="PaidAmount" Width="92"/>
                                 <DataGridTextColumn Header="Срок" Binding="{Binding DeliveryWeeks, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="DeliveryWeeks" Width="58"/>
-                                <DataGridCheckBoxColumn Header="Подано в оплату" Binding="{Binding PaymentSubmitted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="110"/>
-                                <DataGridCheckBoxColumn Header="Оплачено?" Binding="{Binding Paid, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="76"/>
-                                <DataGridCheckBoxColumn Header="Инвойс" Binding="{Binding InvoiceReceived, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="62"/>
-                                <DataGridCheckBoxColumn Header="Инвойс подтв." Binding="{Binding InvoiceConfirmed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="98"/>
-                                <DataGridCheckBoxColumn Header="ERP пост." Binding="{Binding ErpSupplierSent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="76"/>
-                                <DataGridCheckBoxColumn Header="ERP Roger" Binding="{Binding ErpRogerSent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                                <DataGridCheckBoxColumn Header="Подано в оплату" Binding="{Binding PaymentSubmitted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="PaymentSubmitted" Width="110"/>
+                                <DataGridCheckBoxColumn Header="Оплачено?" Binding="{Binding Paid, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="Paid" Width="76"/>
+                                <DataGridCheckBoxColumn Header="Инвойс" Binding="{Binding InvoiceReceived, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="InvoiceReceived" Width="62"/>
+                                <DataGridCheckBoxColumn Header="Инвойс подтв." Binding="{Binding InvoiceConfirmed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="InvoiceConfirmed" Width="98"/>
+                                <DataGridCheckBoxColumn Header="ERP пост." Binding="{Binding ErpSupplierSent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="ErpSupplierSent" Width="76"/>
+                                <DataGridCheckBoxColumn Header="ERP Roger" Binding="{Binding ErpRogerSent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="ErpRogerSent" Width="80"/>
                                 <DataGridTextColumn Header="Дата подтв." Binding="{Binding InvoiceConfirmedDate}" SortMemberPath="InvoiceConfirmedDate" Width="90" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="План поступл." Binding="{Binding ComponentsReceiptDate}" SortMemberPath="ComponentsReceiptDate" Width="100" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Факт поступл." Binding="{Binding ActualReceiptDate}" Width="100" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="220" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Факт поступл." Binding="{Binding ActualReceiptDate}" SortMemberPath="ActualReceiptDate" Width="100" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="Дважды щёлкните, чтобы изменить дату фактического поступления."/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="Comment" Width="220"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
@@ -424,6 +487,20 @@
                                         Style="{StaticResource SecondaryButtonStyle}"
                                         Command="{Binding LoadQuotesFromDocumentCommand}"
                                         Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+                                <Button Content="Свести RRFQ"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Command="{Binding MergeRrfqCommand}"
+                                        Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+                                <Button Content="RFQ из Bitrix"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding LoadRfqFromBitrixCommand}"
+                                        Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"
+                                        ToolTip="Загрузить файл заявки из задачи Bitrix, связанной со сделкой"/>
+                                <Button Content="RFQ поставщикам"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Command="{Binding PrepareRfqCommand}"
+                                        Height="26" DockPanel.Dock="Right" Margin="0,0,8,0"
+                                        ToolTip="Конвейер RFQ: исходник заявки → позиции для поставщиков → черновики писем"/>
                                 <TextBlock Text="Документы сделки: перетащите или выберите файлы"
                                            Foreground="{StaticResource MutedBrush}"
                                            FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -448,13 +525,14 @@
                                     <ContextMenu>
                                         <MenuItem Header="Открыть в проводнике" Command="{Binding OpenDocumentInExplorerCommand}"/>
                                         <MenuItem Header="Загрузить квоты" Command="{Binding LoadQuotesFromDocumentCommand}"/>
+                                        <MenuItem Header="Изменить тип / назначить поставщика" Command="{Binding ChangeDocumentBindingCommand}"/>
                                         <Separator/>
                                         <MenuItem Header="Удалить" Command="{Binding DeleteDocumentCommand}"/>
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Тип" Binding="{Binding DocumentType}" Width="110"/>
-                                    <DataGridTextColumn Header="Поставщик" Binding="{Binding Supplier}" Width="120"/>
+                                    <DataGridTextColumn Header="Поставщик" Binding="{Binding SupplierDisplay}" Width="150"/>
                                     <DataGridTextColumn Header="Файл" Binding="{Binding OriginalName}" Width="260"/>
                                     <DataGridTextColumn Header="Загружен" Binding="{Binding UploadedAt}" Width="140"/>
                                     <DataGridTextColumn Header="Путь" Binding="{Binding StoredPath}" Width="360"/>

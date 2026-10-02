@@ -5,6 +5,8 @@ public static class RrfqImportQueue
 {
     private static readonly List<(string Path, string Supplier)> Pending = new();
     public static event Action<string, string>? Added;
+    public static event Func<RrfqDealComparisonContext, bool>? DealComparisonRequested;
+    private static RrfqDealComparisonContext? PendingDealComparison;
 
     public static void Add(string path, string supplier)
     {
@@ -21,4 +23,29 @@ public static class RrfqImportQueue
     {
         var items = Pending.ToList(); Pending.Clear(); return items;
     }
+
+    /// <summary>Передаёт в сравнение документы одной сделки вместе с их идентификаторами.</summary>
+    public static bool OpenDealComparison(RrfqDealComparisonContext context)
+    {
+        if (DealComparisonRequested is { } handler)
+            return handler.GetInvocationList().Cast<Func<RrfqDealComparisonContext, bool>>().All(action => action(context));
+        PendingDealComparison = context;
+        return true;
+    }
+
+    public static RrfqDealComparisonContext? TakePendingDealComparison()
+    {
+        var context = PendingDealComparison;
+        PendingDealComparison = null;
+        return context;
+    }
 }
+
+public sealed record RrfqDealSourceDocument(long DocumentId, long SupplierId, string Supplier, string Path);
+
+public sealed record RrfqDealComparisonContext(
+    long DealId,
+    string DealNumber,
+    long RfqDocumentId,
+    string RfqPath,
+    IReadOnlyList<RrfqDealSourceDocument> SupplierDocuments);

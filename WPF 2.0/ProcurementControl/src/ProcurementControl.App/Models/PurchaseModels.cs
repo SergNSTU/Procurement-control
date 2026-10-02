@@ -146,6 +146,10 @@ public sealed class SupplierRow
     public string ComponentsReceiptDate { get; set; } = string.Empty;
     public string ActualReceiptDate { get; set; } = string.Empty;
     public string? Comment { get; set; }
+
+    /// <summary>Подсветка строки: поставщик опоздал с поступлением.</summary>
+    public bool IsLate =>
+        PurchaseFormatting.IsSupplierLate(ComponentsReceiptDate, ActualReceiptDate, DateTime.Today);
 }
 
 /// <summary>Задача для счётчика «Активные» (ключ сделки + статус).</summary>
@@ -154,6 +158,28 @@ public sealed class CockpitTaskKey
     public long Id { get; set; }
     public string DealNumber { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Строка списка под плиткой метрик: текст + сделка для перехода
+/// по двойному клику (DealId 0 — искать по номеру).
+/// </summary>
+public sealed class TileLineRow
+{
+    public string Text { get; set; } = string.Empty;
+    public long DealId { get; set; }
+    public string DealNumber { get; set; } = string.Empty;
+}
+
+/// <summary>План/факт поступления поставщика неархивной сделки (плитка «Просрочено»).</summary>
+public sealed class SupplierPlanRow
+{
+    public long DealId { get; set; }
+    public string DealNumber { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Supplier { get; set; } = string.Empty;
+    public string ComponentsReceiptDate { get; set; } = string.Empty;
+    public string ActualReceiptDate { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -196,6 +222,33 @@ public static class PurchaseFormatting
             return loose;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Поставщик опоздал: план поступления уже прошёл без факта,
+    /// либо факт проставлен позже плана (подсветка строки в сетке).
+    /// </summary>
+    public static bool IsSupplierLate(string? componentsReceiptDate, string? actualReceiptDate, DateTime today)
+    {
+        var plan = ParseDate(componentsReceiptDate);
+        if (plan is null)
+        {
+            return false;
+        }
+
+        var fact = ParseDate(actualReceiptDate);
+        return fact is null ? plan.Value.Date < today : fact.Value.Date > plan.Value.Date;
+    }
+
+    /// <summary>
+    /// Поступление просрочено: план уже прошёл, а факта до сих пор нет.
+    /// Опоздавший, но поступивший поставщик сделку просрочкой не считает.
+    /// </summary>
+    public static bool IsReceiptOverdue(string? componentsReceiptDate, string? actualReceiptDate, DateTime today)
+    {
+        return ParseDate(actualReceiptDate) is null
+            && ParseDate(componentsReceiptDate) is { } plan
+            && plan.Date < today;
     }
 
     /// <summary>Аналог Format-PurchaseDate: не парсится — вернуть исходный текст.</summary>
