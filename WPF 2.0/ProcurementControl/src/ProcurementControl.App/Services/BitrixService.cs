@@ -84,6 +84,29 @@ public static class BitrixService
     public static string GetTaskViewUrl(BitrixConfig config, int taskId)
         => $"{NormalizeBaseUrl(config.BaseUrl)}/company/personal/user/{config.WebhookUserId}/tasks/task/view/{taskId}/";
 
+    /// <summary>Ссылка на редактирование задачи: форма заполнена, можно поправить и сохранить.</summary>
+    public static string GetTaskEditUrl(BitrixConfig config, int taskId)
+        => $"{NormalizeBaseUrl(config.BaseUrl)}/company/personal/user/{config.WebhookUserId}/tasks/task/edit/{taskId}/";
+
+    /// <summary>
+    /// Форма создания задачи с применённым шаблоном (?TEMPLATE=id — проверено:
+    /// новая форма предзаполняет название, проект, исполнителя, наблюдателей,
+    /// чек-лист из шаблона).
+    /// </summary>
+    public static string GetTemplateFormUrl(BitrixConfig config, int templateId)
+        => $"{NormalizeBaseUrl(config.BaseUrl)}/company/personal/user/{config.WebhookUserId}/tasks/task/edit/0/?TEMPLATE={templateId}";
+
+    /// <summary>Обновляет поля шаблона задачи. Параметр строго templateId
+    /// («id» портал не признаёт: Could not find value for parameter).</summary>
+    public static async Task UpdateTemplateAsync(BitrixConfig config, int templateId, Dictionary<string, object> fields)
+    {
+        await InvokeRootAsync(config, "tasks.template.update", new Dictionary<string, object>
+        {
+            ["templateId"] = templateId,
+            ["fields"] = fields,
+        });
+    }
+
     /// <summary>
     /// Аналог Invoke-BitrixMethod: POST JSON-вызов метода портала. Возвращает
     /// корень ответа: у списковых методов next/total лежат рядом с result,
@@ -99,9 +122,35 @@ public static class BitrixService
             Timeout = TimeSpan.FromSeconds(TimeoutSeconds),
         };
         using var response = await client.PostAsJsonAsync(uri, parameters);
-        response.EnsureSuccessStatusCode();
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var content = await response.Content.ReadAsStringAsync();
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(content);
+        }
+        catch (JsonException)
+        {
+            // Не-JSON тело бывает у ошибок уровня сервера — показываем хотя бы код.
+            response.EnsureSuccessStatusCode();
+            throw new InvalidOperationException("Bitrix вернул не-JSON ответ для " + method + ".");
+        }
+
+        using var _ = document;
         var root = document.RootElement;
+
+        // Битрикс ошибки отдаёт и не-200 кодом, и JSON-телом — берём текст из тела.
+        if (!response.IsSuccessStatusCode)
+        {
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var httpError)
+                && httpError.ValueKind != JsonValueKind.Null)
+            {
+                var httpDescription = root.TryGetProperty("error_description", out var httpDesc) ? httpDesc.GetString() : null;
+                throw new InvalidOperationException($"Bitrix API error {httpError}: {httpDescription}");
+            }
+
+            response.EnsureSuccessStatusCode();
+        }
 
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var error)
             && error.ValueKind != JsonValueKind.Null)
@@ -706,6 +755,304 @@ public static class BitrixService
         return tasks;
     }
 
+    // ------------------------------------------------------------------
+    // Заказ переработчику: создание задачи в группе «Внесение документов
+    // в ЕРП» с чек-листом и вложениями сделки.
+    // ------------------------------------------------------------------
+
+    /// <summary>Создаёт задачу (tasks.task.add), возвращает её id.</summary>
+    public static async Task<int> AddTaskAsync(BitrixConfig config, Dictionary<string, object> fields)
+    {
+        var result = await InvokeMethodAsync(config, "tasks.task.add", new Dictionary<string, object>
+        {
+            ["fields"] = fields,
+        });
+
+        var element = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("task", out var task)
+            ? task
+            : result;
+        var id = ToInt(element, "ID", ToInt(element, "id", 0));
+        if (id <= 0)
+        {
+            throw new InvalidOperationException("Bitrix не вернул номер созданной задачи.");
+        }
+
+        return id;
+    }
+
+    /// <summary>Название задачи по id (tasks.task.get), пустая строка — не найдена.</summary>
+    public static async Task<string> GetTaskTitleAsync(BitrixConfig config, int taskId)
+    {
+        var result = await InvokeMethodAsync(config, "tasks.task.get", new Dictionary<string, object>
+        {
+            ["taskId"] = taskId,
+            ["select"] = new[] { "id", "title" },
+        });
+
+        var element = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("task", out var task)
+            ? task
+            : result;
+        return ToText(element, "TITLE", ToText(element, "title"));
+    }
+
+    /// <summary>
+    /// Задачи группы (постранично). LIKE-фильтр по TITLE на портале ненадёжен
+    /// (поиск «%TRPR-…%» не находит существующую задачу), поэтому для проверки
+    /// дублей группу выбираем целиком и сопоставляем названия на нашей стороне.
+    /// </summary>
+    public static async Task<List<BitrixTaskInfo>> GetGroupTasksAsync(BitrixConfig config, int groupId)
+    {
+        var tasks = new List<BitrixTaskInfo>();
+        var start = 0;
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var parameters = new Dictionary<string, object>
+            {
+                ["filter"] = new Dictionary<string, object> { ["GROUP_ID"] = groupId },
+                ["select"] = new[] { "id", "title", "createdDate" },
+                ["order"] = new Dictionary<string, object> { ["ID"] = "DESC" },
+            };
+            if (start > 0)
+            {
+                parameters["start"] = start;
+            }
+
+            var root = await InvokeRootAsync(config, "tasks.task.list", parameters);
+            var batch = ReadTaskList(root);
+            tasks.AddRange(batch);
+
+            if (!(root.ValueKind == JsonValueKind.Object && root.TryGetProperty("next", out var next)
+                && next.ValueKind == JsonValueKind.Number && next.TryGetInt32(out var nextStart) && nextStart > 0))
+            {
+                break;
+            }
+
+            start = nextStart;
+        }
+
+        return tasks;
+    }
+
+    /// <summary>Пункт чек-листа задачи. Старый метод task.checklistitem.add —
+    /// поля строго массивом в FIELDS (TITLE отдельным параметром даёт
+    /// WRONG_ARGUMENTS).</summary>
+    public static async Task AddChecklistItemAsync(BitrixConfig config, int taskId, string title)
+    {
+        await InvokeRootAsync(config, "task.checklistitem.add", new Dictionary<string, object>
+        {
+            ["TASKID"] = taskId.ToString(),
+            ["FIELDS"] = new Dictionary<string, object> { ["TITLE"] = title },
+        });
+    }
+
+    /// <summary>
+    /// Корневая папка диска группы (disk.storage.getlist → ROOT_OBJECT_ID);
+    /// null — хранилище группы недоступно вебхуку.
+    /// </summary>
+    public static async Task<string?> FindGroupStorageRootAsync(BitrixConfig config, int groupId)
+    {
+        var result = await InvokeMethodAsync(config, "disk.storage.getlist", new Dictionary<string, object>());
+        if (result.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var storage in result.EnumerateArray())
+        {
+            if (ToText(storage, "ENTITY_TYPE") != "group" || ToInt(storage, "ENTITY_ID", 0) != groupId)
+            {
+                continue;
+            }
+
+            var root = ToText(storage, "ROOT_OBJECT_ID", ToText(storage, "rootObjectId"));
+            if (root.Length > 0)
+            {
+                return root;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Папка name внутри parentFolderId: находит существующую или создаёт
+    /// (disk.folder.addsubfolder). Возвращает id папки.
+    /// </summary>
+    public static async Task<string> EnsureFolderAsync(BitrixConfig config, string parentFolderId, string name)
+    {
+        var children = await InvokeMethodAsync(config, "disk.folder.getchildren", new Dictionary<string, object>
+        {
+            ["id"] = parentFolderId,
+        });
+
+        if (children.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in children.EnumerateArray())
+            {
+                if (string.Equals(ToText(child, "NAME", ToText(child, "name")), name, StringComparison.OrdinalIgnoreCase)
+                    && ToText(child, "TYPE", ToText(child, "type")) == "folder")
+                {
+                    return ToText(child, "ID", ToText(child, "id"));
+                }
+            }
+        }
+
+        var created = await InvokeMethodAsync(config, "disk.folder.addsubfolder", new Dictionary<string, object>
+        {
+            // Ровно «id»: параметр parentId портал отвергает с ERROR_ARGUMENT.
+            ["id"] = parentFolderId,
+            ["data"] = new Dictionary<string, object> { ["NAME"] = name },
+        });
+        var id = ToText(created, "ID", ToText(created, "id"));
+        if (id.Length == 0)
+        {
+            throw new InvalidOperationException("Bitrix не вернул номер созданной папки «" + name + "».");
+        }
+
+        return id;
+    }
+
+    /// <summary>
+    /// Загружает локальный файл в папку диска. Проверенный контракт портала:
+    /// disk.folder.uploadfile с fileContent (base64) — одиночный вызов (вариант
+    /// с multipart портал переводит в двухэтапный handshake с uploadUrl).
+    /// Файл с тем же именем: тот же размер — переиспользуем id (повторный запуск
+    /// после сбоя); другой размер — disk.file.uploadversion (новая версия).
+    /// Возвращает id файла на диске — он же идёт в UF_TASK_WEBDAV_FILES.
+    /// </summary>
+    public static async Task<long> UploadFileAsync(BitrixConfig config, string folderId, string localPath, string fileName)
+    {
+        var children = await InvokeMethodAsync(config, "disk.folder.getchildren", new Dictionary<string, object>
+        {
+            ["id"] = folderId,
+        });
+
+        long existingId = 0;
+        long existingSize = -1;
+        if (children.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in children.EnumerateArray())
+            {
+                if (!string.Equals(ToText(child, "NAME", ToText(child, "name")), fileName, StringComparison.OrdinalIgnoreCase)
+                    || ToText(child, "TYPE", ToText(child, "type")) != "file")
+                {
+                    continue;
+                }
+
+                existingId = ToLong(child, "ID", ToLong(child, "id", 0));
+                existingSize = ToLong(child, "SIZE", ToLong(child, "size", -1));
+                break;
+            }
+        }
+
+        var fileContent = Convert.ToBase64String(await File.ReadAllBytesAsync(localPath));
+
+        if (existingId > 0)
+        {
+            if (existingSize == new FileInfo(localPath).Length)
+            {
+                return existingId;
+            }
+
+            var updated = await InvokeMethodAsync(config, "disk.file.uploadversion", new Dictionary<string, object>
+            {
+                ["id"] = existingId,
+                ["data"] = new Dictionary<string, object> { ["NAME"] = fileName },
+                ["fileContent"] = fileContent,
+            });
+            var updatedId = ToLong(updated, "ID", ToLong(updated, "id", 0));
+            return updatedId > 0 ? updatedId : existingId;
+        }
+
+        var created = await InvokeMethodAsync(config, "disk.folder.uploadfile", new Dictionary<string, object>
+        {
+            ["id"] = folderId,
+            ["data"] = new Dictionary<string, object> { ["NAME"] = fileName },
+            ["fileContent"] = fileContent,
+        });
+
+        var id = ToLong(created, "ID", ToLong(created, "id", 0));
+        if (id <= 0)
+        {
+            throw new InvalidOperationException("Bitrix не вернул номер файла после загрузки " + fileName + ".");
+        }
+
+        return id;
+    }
+
+    /// <summary>
+    /// Привязывает файлы диска к задаче (UF_TASK_WEBDAV_FILES). Проверено на
+    /// портале: принимается только строковый формат «n{id}» (id файла диска,
+    /// портал сам создаёт attached object); голое число даёт ERROR_CORE
+    /// «Не удалось найти файл». Поэтому «n{id}» — первым, число — запасным.
+    /// </summary>
+    public static async Task AttachFilesToTaskAsync(BitrixConfig config, int taskId, IReadOnlyList<long> diskFileIds)
+    {
+        if (diskFileIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var attempt in new Func<long, object>[] { id => "n" + id, id => id })
+        {
+            var payload = diskFileIds.Select(attempt).ToList();
+            try
+            {
+                await InvokeRootAsync(config, "tasks.task.update", new Dictionary<string, object>
+                {
+                    ["taskId"] = taskId,
+                    ["fields"] = new Dictionary<string, object> { ["UF_TASK_WEBDAV_FILES"] = payload },
+                });
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("bitrix", "привязка файлов к задаче " + taskId + " (формат " +
+                    (payload[0] is string ? "nXXX" : "число") + "): " + ex.Message);
+                continue;
+            }
+
+            var attached = await GetAttachedFileCountAsync(config, taskId);
+            if (attached >= diskFileIds.Count)
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Задача " + taskId + " создана, но файлы не прикрепились (ids на диске: " +
+            string.Join(", ", diskFileIds) + "). Прикрепите их вручную.");
+    }
+
+    /// <summary>Сколько файлов сейчас висит на задаче (UF_TASK_WEBDAV_FILES).</summary>
+    private static async Task<int> GetAttachedFileCountAsync(BitrixConfig config, int taskId)
+    {
+        try
+        {
+            var result = await InvokeMethodAsync(config, "tasks.task.get", new Dictionary<string, object>
+            {
+                ["taskId"] = taskId,
+                // «*» + «UF_*»: выборка только по имени UF-поля на портале терялась.
+                ["select"] = new[] { "*", "UF_*" },
+            });
+
+            var element = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("task", out var task)
+                ? task
+                : result;
+            if (element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty("ufTaskWebdavFiles", out var files)
+                && files.ValueKind == JsonValueKind.Array)
+            {
+                return files.GetArrayLength();
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Append("bitrix", "проверка вложений задачи " + taskId + ": " + ex.Message);
+        }
+
+        return 0;
+    }
+
     /// <summary>CREATED_DATE портала («yyyy-MM-dd HH:mm:ss») в DateTime.</summary>
     public static DateTime? ParsePortalDate(string? value)
         => DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
@@ -736,6 +1083,24 @@ public static class BitrixService
         }
 
         return value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out var fromText)
+            ? fromText
+            : fallback;
+    }
+
+    /// <summary>Как ToInt, но для id диска (могут не влезать в int).</summary>
+    private static long ToLong(JsonElement element, string name, long fallback)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+        {
+            return fallback;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var parsed))
+        {
+            return parsed;
+        }
+
+        return value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), out var fromText)
             ? fromText
             : fallback;
     }

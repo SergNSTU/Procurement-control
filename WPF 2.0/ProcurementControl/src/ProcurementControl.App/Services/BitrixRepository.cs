@@ -145,4 +145,45 @@ WHERE NOT EXISTS (SELECT 1 FROM bitrix_task_links WHERE bitrix_task_id = @task_i
     /// <summary>Аналог ConvertTo-BitrixInt.</summary>
     private static int ParseInt(string value, int defaultValue)
         => int.TryParse(value.Trim(), out var parsed) ? parsed : defaultValue;
+
+    /// <summary>
+    /// Параметры задачи «Заказ переработчику»: ключи bitrix.recycler_* из
+    /// settings, при отсутствии — дефолты (группа 71 «Внесение документов
+    /// в ЕРП», исполнитель 249, наблюдатель 25, срок 3 дня).
+    /// </summary>
+    public static RecyclerOrderOptions GetRecyclerOrderOptions()
+    {
+        using var snapshot = PurchaseSnapshot.Create();
+        var settings = new SettingsRepository(snapshot.Connection);
+
+        var auditors = settings.GetSetting("bitrix.recycler_auditor_ids")
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => ParseInt(value, 0))
+            .Where(value => value > 0)
+            .ToList();
+        if (auditors.Count == 0)
+        {
+            auditors.Add(25);
+        }
+
+        var checklist = settings.GetSetting("bitrix.recycler_checklist")
+            .Split(new[] { ';', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => value.Length > 0)
+            .ToList();
+        if (checklist.Count == 0)
+        {
+            checklist.Add("Заказы поставщикам");
+            checklist.Add("FPI");
+        }
+
+        var diskFolder = settings.GetSetting("bitrix.recycler_disk_folder").Trim();
+        return new RecyclerOrderOptions(
+            ParseInt(settings.GetSetting("bitrix.recycler_group_id"), 71),
+            ParseInt(settings.GetSetting("bitrix.recycler_responsible_id"), 249),
+            auditors,
+            Math.Max(1, ParseInt(settings.GetSetting("bitrix.recycler_deadline_days"), 3)),
+            checklist,
+            diskFolder.Length > 0 ? diskFolder : "Заказы переработчику",
+            ParseInt(settings.GetSetting("bitrix.recycler_template_id"), 67));
+    }
 }

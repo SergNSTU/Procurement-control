@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.RegularExpressions;
 using ProcurementControl.Models;
 
 namespace ProcurementControl.Services;
@@ -39,8 +38,9 @@ public sealed class DashboardService
             Assemblies = GetDirection(repo, "deals", period.Start, period.End, trackingStartedAt, now,
                 SumOrderedDealAmounts(repo, period.Start, period.End)),
             Components = GetDirection(repo, "component_deals", period.Start, period.End, trackingStartedAt, now,
-                repo.GetOrderedComponentAmounts(period.Start, period.End).Sum(ParseAmount)),
-            History = GetHistory(repo, period.End.AddMonths(-1), trackingStartedAt)
+                repo.GetOrderedComponentAmounts(period.Start, period.End).Sum(MoneyText.ParseUsd)),
+            History = GetHistory(repo, period.End.AddMonths(-1), trackingStartedAt),
+            MonthlyAmounts = GetMonthlyAmounts(repo, period.Year, trackingStartedAt)
         };
     }
 
@@ -51,12 +51,19 @@ public sealed class DashboardService
         return !string.IsNullOrWhiteSpace(raw) && DateTime.TryParse(raw, out var date) ? date : null;
     }
 
+    /// <summary>
+    /// Сборки с местом сборки «Китай» исключены из всех показателей дашборда
+    /// (просьба 2026-10-05); для component_deals фильтр пустой.
+    /// </summary>
+    private static string NotChinaFilter(string table)
+        => table == "deals" ? " AND IFNULL(TRIM(assembly_location), '') <> 'Китай'" : string.Empty;
+
     /// <summary>Аналог Get-PurchaseDashboardCount.</summary>
     private static int GetCount(PurchaseRepository repo, string table, string dateColumn, DateTime start, DateTime end)
     {
         var orderFilter = dateColumn == "ordered_at" ? " AND IFNULL(ordered_at, '') <> ''" : string.Empty;
         return repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE {dateColumn} >= @start AND {dateColumn} < @end{orderFilter}",
+            $"SELECT COUNT(*) FROM {table} WHERE {dateColumn} >= @start AND {dateColumn} < @end{orderFilter}{NotChinaFilter(table)}",
             new Dictionary<string, object?>
             {
                 ["@start"] = start.ToString(DateFormat),
@@ -86,18 +93,19 @@ public sealed class DashboardService
         var createdThisMonth = GetCount(repo, table, "created_at", periodStart, periodEnd);
         var orderedThisMonth = GetCount(repo, table, "ordered_at", periodStart, periodEnd);
 
+        var notChina = NotChinaFilter(table);
         var currentCohortCreated = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e",
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e{notChina}",
             P(currentCohortStart, periodEnd));
         var currentCohortOrdered = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''",
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''{notChina}",
             P(currentCohortStart, periodEnd));
         var matureCohortEnd = matureCutoff < periodEnd ? matureCutoff : periodEnd;
         var matureCohortCreated = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e",
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e{notChina}",
             P(currentCohortStart, matureCohortEnd));
         var matureCohortOrdered = repo.ScalarInt(
-            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''",
+            $"SELECT COUNT(*) FROM {table} WHERE created_at >= @s AND created_at < @e AND IFNULL(ordered_at, '') <> ''{notChina}",
             P(currentCohortStart, matureCohortEnd));
 
         return new DirectionMetrics
@@ -116,24 +124,7 @@ public sealed class DashboardService
     private static decimal SumOrderedDealAmounts(PurchaseRepository repo, DateTime start, DateTime end)
         => repo.GetOrderedDealSupplierAmounts(start, end)
             .GroupBy(row => row.DealId)
-            .Sum(deal => deal.Sum(row => ParseAmount(row.AmountUsd)));
-
-    private static decimal ParseAmount(string? value)
-    {
-        var text = value?.Trim();
-        if (string.IsNullOrWhiteSpace(text)) return 0m;
-        text = Regex.Replace(text, @"[^0-9,\.\-]", string.Empty);
-        if (text.Count(c => c == ',') > 0 && text.Count(c => c == '.') > 0)
-        {
-            var decimalSeparator = Math.Max(text.LastIndexOf(','), text.LastIndexOf('.'));
-            text = text[..decimalSeparator].Replace(",", string.Empty).Replace(".", string.Empty) + "." + text[(decimalSeparator + 1)..];
-        }
-        else if (text.Count(c => c == ',') == 1)
-        {
-            text = text.Replace(',', '.');
-        }
-        return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var result) ? result : 0m;
-    }
+            .Sum(deal => deal.Sum(row => MoneyText.ParseUsd(row.AmountUsd)));
 
     /// <summary>Аналог Get-PurchaseDashboardHistory (6 месяцев).</summary>
     private static IReadOnlyList<MonthHistoryRow> GetHistory(
@@ -159,6 +150,32 @@ public sealed class DashboardService
         }
         return rows;
     }
+
+    /// <summary>Суммы заказов по месяцам выбранного года — данные для компактных графиков.</summary>
+    private static IReadOnlyList<DashboardMonthlyAmountRow> GetMonthlyAmounts(
+        PurchaseRepository repo, int year, DateTime trackingStartedAt)
+    {
+        var rows = new List<DashboardMonthlyAmountRow>();
+        for (var month = 1; month <= 12; month++)
+        {
+            var start = new DateTime(year, month, 1);
+            var end = start.AddMonths(1);
+            var hasOrderData = end > trackingStartedAt;
+            rows.Add(new DashboardMonthlyAmountRow
+            {
+                MonthStart = start,
+                Month = month,
+                Label = ShortMonths[month - 1],
+                HasOrderData = hasOrderData,
+                AssemblyAmountUsd = hasOrderData ? SumOrderedDealAmounts(repo, start, end) : 0m,
+                ComponentAmountUsd = hasOrderData ? repo.GetOrderedComponentAmounts(start, end).Sum(MoneyText.ParseUsd) : 0m
+            });
+        }
+        return rows;
+    }
+
+    private static readonly string[] ShortMonths =
+        { "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек" };
 
     private static string FormatPeriodLabel(DashboardPeriod period) => period.Mode == DashboardPeriodMode.Month
         ? period.Start.ToString("MMMM yyyy", Ru)

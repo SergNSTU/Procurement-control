@@ -135,7 +135,8 @@ SELECT
     IFNULL(stats.done_count, 0) AS done_count,
     IFNULL(stats.invoice_confirmed_count, 0) AS invoice_confirmed_count,
     IFNULL(stats.receipt_count, 0) AS receipt_count,
-    IFNULL(stats.max_receipt_date, '') AS completion_receipt_date
+    IFNULL(stats.max_receipt_date, '') AS completion_receipt_date,
+    IFNULL(rrfq.rrfq_count, 0) AS rrfq_count
 FROM deals d
 LEFT JOIN (
     SELECT
@@ -155,6 +156,16 @@ LEFT JOIN (
     FROM deal_suppliers
     GROUP BY deal_id
 ) stats ON stats.deal_id = d.id
+-- Пузырёк «пришло RRFQ»: привязанные поставщики считаются один раз,
+-- непривязанные документы (неизвестные отправители) — каждый сам по себе.
+LEFT JOIN (
+    SELECT
+        deal_id,
+        COUNT(DISTINCT IFNULL(supplier_id, -rowid)) AS rrfq_count
+    FROM documents
+    WHERE document_type = 'RRFQ'
+    GROUP BY deal_id
+) rrfq ON rrfq.deal_id = d.id
 -- Порядок списка фиксирован по «Этапу»: правка сделки обновляет updated_at,
 -- но не переставляет её среди остальных строк.
 ORDER BY d.status COLLATE NOCASE ASC, d.id ASC";
@@ -192,6 +203,7 @@ ORDER BY d.status COLLATE NOCASE ASC, d.id ASC";
                 InvoiceConfirmedCount = Convert.ToInt32(reader.GetValue(21)),
                 ReceiptCount = Convert.ToInt32(reader.GetValue(22)),
                 CompletionReceiptDate = Text(reader, 23),
+                RrfqCount = Convert.ToInt32(reader.GetValue(24)),
             });
         }
         return result;
@@ -291,6 +303,7 @@ FROM deal_suppliers ds
 JOIN deals d ON d.id = ds.deal_id
 WHERE IFNULL(d.archived, 0) = 0
   AND TRIM(IFNULL(d.status, '')) IN ('Закупка', 'Заказано')
+  AND IFNULL(TRIM(d.assembly_location), '') <> 'Китай'
 ORDER BY d.updated_at DESC, d.deal_number, ds.supplier";
 
         var result = new List<SupplierActionRow>();
@@ -319,6 +332,60 @@ ORDER BY d.updated_at DESC, d.deal_number, ds.supplier";
                 ActualReceiptDate = Text(reader, 14),
                 DeliveryWeeks = Text(reader, 15),
             });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Кандидаты на пуш-напоминание: поставщики сделок на этапе RFQ, которым
+    /// разослан RFQ (rfq_sent_at заполнен), а ответный RRFQ-документ от них
+    /// ещё не пришёл. Когда именно напоминать (48 рабочих часов) решает логика.
+    /// На старых базах без колонки rfq_sent_at возвращает пустой список.
+    /// </summary>
+    public List<RfqFollowUpRow> GetRfqFollowUpRows()
+    {
+        const string sql = @"
+SELECT
+    ds.deal_id,
+    d.deal_number,
+    ds.id AS supplier_id,
+    ds.supplier,
+    IFNULL(ds.rfq_sent_at, '') AS rfq_sent_at
+FROM deal_suppliers ds
+JOIN deals d ON d.id = ds.deal_id
+WHERE IFNULL(d.archived, 0) = 0
+  AND TRIM(IFNULL(d.status, '')) = 'RFQ'
+  AND IFNULL(TRIM(d.assembly_location), '') <> 'Китай'
+  AND IFNULL(ds.rfq_sent_at, '') <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM documents doc
+      WHERE doc.deal_id = ds.deal_id
+        AND doc.document_type = 'RRFQ'
+        AND doc.supplier_id = ds.id
+  )
+ORDER BY d.deal_number, ds.supplier";
+
+        var result = new List<RfqFollowUpRow>();
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = sql;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                result.Add(new RfqFollowUpRow
+                {
+                    DealId = reader.GetInt64(0),
+                    DealNumber = Text(reader, 1),
+                    SupplierId = reader.GetInt64(2),
+                    Supplier = Text(reader, 3),
+                    RfqSentAt = Text(reader, 4),
+                });
+            }
+        }
+        catch (SqliteException)
+        {
+            // Колонки rfq_sent_at ещё нет (до первой рассылки) — кандидатов нет.
         }
         return result;
     }
@@ -358,13 +425,14 @@ ORDER BY d.deal_number, ds.supplier";
         return result;
     }
 
-    /// <summary>USD-суммы поставщиков только сделок, заказанных в выбранный период.</summary>
+    /// <summary>USD-суммы поставщиков только сделок, заказанных в выбранный период. Сборки «Китай» исключены.</summary>
     public IReadOnlyList<DashboardSupplierAmountRow> GetOrderedDealSupplierAmounts(DateTime start, DateTime end)
     {
         const string sql = @"
 SELECT ds.deal_id, IFNULL(ds.pi_amount_usd, '')
 FROM deals d JOIN deal_suppliers ds ON ds.deal_id = d.id
-WHERE IFNULL(d.ordered_at, '') <> '' AND d.ordered_at >= @start AND d.ordered_at < @end;";
+WHERE IFNULL(d.ordered_at, '') <> '' AND d.ordered_at >= @start AND d.ordered_at < @end
+  AND IFNULL(TRIM(d.assembly_location), '') <> 'Китай';";
         var rows = new List<DashboardSupplierAmountRow>();
         using var command = _connection.CreateCommand();
         command.CommandText = sql;
@@ -393,6 +461,7 @@ WHERE IFNULL(ordered_at, '') <> '' AND ordered_at >= @start AND ordered_at < @en
 
     /// <summary>
     /// Напоминания сделок (поле reminder_date) — перенос запроса из строк 1293-1300.
+    /// Сделки «Китай» исключены: для них напоминания отключены (2026-10-05).
     /// </summary>
     public List<DealReminderRow> GetDealReminderRows()
     {
@@ -402,6 +471,7 @@ FROM deals
 WHERE IFNULL(archived, 0) = 0
   AND IFNULL(status, '') NOT IN ('Выполнено', 'Не актуально')
   AND IFNULL(reminder_date, '') <> ''
+  AND IFNULL(TRIM(assembly_location), '') <> 'Китай'
 ORDER BY reminder_date, id DESC";
 
         var result = new List<DealReminderRow>();
@@ -423,17 +493,25 @@ ORDER BY reminder_date, id DESC";
 
     /// <summary>
     /// Ручные напоминания (таблица reminders, status <> 'Done') — перенос строк 1315-1323.
+    /// Напоминания, привязанные к сделкам/поставщикам китайских сборок, исключены.
     /// </summary>
     public List<ManualReminderRow> GetManualReminderRows()
     {
         const string sql = @"
-SELECT id, deal_id, supplier_id, title, due_date, status, source
-FROM reminders
-WHERE status <> 'Done'
+SELECT r.id, r.deal_id, r.supplier_id, r.title, r.due_date, r.status, r.source
+FROM reminders r
+WHERE r.status <> 'Done'
+  AND NOT EXISTS (
+      SELECT 1 FROM deals d
+      WHERE d.id = r.deal_id AND IFNULL(TRIM(d.assembly_location), '') = 'Китай')
+  AND NOT EXISTS (
+      SELECT 1 FROM deal_suppliers ds
+      JOIN deals d2 ON d2.id = ds.deal_id
+      WHERE ds.id = r.supplier_id AND IFNULL(TRIM(d2.assembly_location), '') = 'Китай')
 ORDER BY
-    CASE WHEN IFNULL(due_date, '') = '' THEN 1 ELSE 0 END,
-    due_date,
-    id DESC";
+    CASE WHEN IFNULL(r.due_date, '') = '' THEN 1 ELSE 0 END,
+    r.due_date,
+    r.id DESC";
 
         var result = new List<ManualReminderRow>();
         using var command = _connection.CreateCommand();

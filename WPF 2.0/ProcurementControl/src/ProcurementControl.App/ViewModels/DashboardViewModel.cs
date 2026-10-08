@@ -42,6 +42,14 @@ public partial class DashboardViewModel : ObservableObject
     [ObservableProperty] private string _componentsCurrentConversion = "—";
     [ObservableProperty] private string _componentsMatureConversion = "—";
 
+    // Компактные графики «сумма заказов по месяцам»
+    [ObservableProperty] private string _assembliesYearTotal = "—";
+    [ObservableProperty] private string _componentsYearTotal = "—";
+    [ObservableProperty] private bool _showAmountsHint;
+    [ObservableProperty] private string _amountsHintText = string.Empty;
+    public ObservableCollection<MonthlyBar> AssemblyBars { get; } = new();
+    public ObservableCollection<MonthlyBar> ComponentBars { get; } = new();
+
     public ObservableCollection<MonthHistoryRow> History { get; } = new();
     public ObservableCollection<int> AvailableYears { get; } = new();
     public IReadOnlyList<DashboardPeriodModeOption> PeriodModes { get; } = new[]
@@ -89,7 +97,8 @@ public partial class DashboardViewModel : ObservableObject
         try
         {
             if (SelectedPeriod is null) return;
-            var data = _service.GetDashboard(new DashboardPeriod(SelectedYear, SelectedPeriodMode, SelectedPeriod.Value));
+            var period = new DashboardPeriod(SelectedYear, SelectedPeriodMode, SelectedPeriod.Value);
+            var data = _service.GetDashboard(period);
             ErrorMessage = string.Empty;
 
             PeriodLabel = data.PeriodLabel;
@@ -115,6 +124,8 @@ public partial class DashboardViewModel : ObservableObject
             {
                 History.Add(row);
             }
+
+            BuildAmountCharts(period, data);
         }
         catch (Exception ex)
         {
@@ -127,6 +138,54 @@ public partial class DashboardViewModel : ObservableObject
 
     private static string FormatAmount(decimal value)
         => value.ToString("N2", Ru) + " $";
+
+    private const double MaxBarHeight = 104;
+
+    /// <summary>Готовит столбцы графиков «сумма заказов по месяцам» для обоих направлений.</summary>
+    private void BuildAmountCharts(DashboardPeriod period, DashboardData data)
+    {
+        const double stubHeight = 3;
+        var months = data.MonthlyAmounts;
+        var maxAssembly = months.Max(row => row.AssemblyAmountUsd);
+        var maxComponent = months.Max(row => row.ComponentAmountUsd);
+        var anyData = months.Any(row => row.HasOrderData);
+
+        AssemblyBars.Clear();
+        ComponentBars.Clear();
+        var today = DateTime.Today;
+        foreach (var row in months)
+        {
+            var hasData = row.HasOrderData && row.MonthStart <= today;
+            var monthLabel = row.MonthStart.ToString("MMMM yyyy", Ru);
+            var highlighted = row.MonthStart >= period.Start && row.MonthStart < period.End;
+            var tooltip = hasData
+                ? $"{monthLabel} · {FormatAmount(row.AssemblyAmountUsd)}"
+                : $"{monthLabel} · нет данных (отслеживание начато позже)";
+            AssemblyBars.Add(new MonthlyBar(
+                row.Label, tooltip, BarHeight(row.AssemblyAmountUsd, maxAssembly, hasData, stubHeight),
+                highlighted, hasData));
+            tooltip = hasData
+                ? $"{monthLabel} · {FormatAmount(row.ComponentAmountUsd)}"
+                : $"{monthLabel} · нет данных (отслеживание начато позже)";
+            ComponentBars.Add(new MonthlyBar(
+                row.Label, tooltip, BarHeight(row.ComponentAmountUsd, maxComponent, hasData, stubHeight),
+                highlighted, hasData));
+        }
+
+        AssembliesYearTotal = anyData ? FormatAmount(months.Sum(row => row.AssemblyAmountUsd)) : "—";
+        ComponentsYearTotal = anyData ? FormatAmount(months.Sum(row => row.ComponentAmountUsd)) : "—";
+        ShowAmountsHint = !anyData;
+        AmountsHintText = data.TrackingStartedAt is null
+            ? "Нет данных о заказах"
+            : "Заказы отслеживаются с " + data.TrackingStartedAt.Value.ToString("dd.MM.yyyy", Ru);
+    }
+
+    private static double BarHeight(decimal value, decimal max, bool hasData, double stubHeight)
+    {
+        if (!hasData) return 0;
+        if (max <= 0 || value <= 0) return stubHeight;
+        return stubHeight + (double)(value / max) * MaxBarHeight;
+    }
 
     private void ReloadForSelectionChange()
     {

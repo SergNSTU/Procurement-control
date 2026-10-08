@@ -290,6 +290,70 @@ UPDATE deals SET status = @value,
         });
     }
 
+    /// <summary>
+    /// Фиксирует момент рассылки RFQ: у перечисленных поставщиков сделки
+    /// проставляется rfq_sent_at (часы 48ч-напоминания считаются от него).
+    /// Повторная рассылка/пуш перезапускает отсчёт.
+    /// </summary>
+    public static void SetSuppliersRfqSentAt(
+        long dealId,
+        IReadOnlyCollection<(long Id, string Name)> suppliers,
+        DateTime sentAt,
+        string activityDetails)
+    {
+        if (dealId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dealId), "Выберите сделку.");
+        }
+        if (suppliers.Count == 0)
+        {
+            return;
+        }
+
+        PurchaseWriteSession.Execute(connection =>
+        {
+            EnsureDealSuppliersRfqSentAtColumn(connection);
+
+            var now = NowText();
+            foreach (var supplier in suppliers)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+UPDATE deal_suppliers
+SET rfq_sent_at = @sent_at, updated_at = @updated_at
+WHERE id = @id AND deal_id = @deal_id;";
+                Add(command, "@sent_at", sentAt.ToString("yyyy-MM-dd HH:mm:ss"));
+                Add(command, "@updated_at", now);
+                Add(command, "@id", supplier.Id);
+                Add(command, "@deal_id", dealId);
+                command.ExecuteNonQuery();
+            }
+
+            var names = string.Join(", ", suppliers.Select(s => s.Name));
+            WriteActivity(connection, "deal", dealId, "Разослан RFQ", activityDetails + ": " + names, dealId);
+            return 0;
+        });
+    }
+
+    /// <summary>Дописывает колонку rfq_sent_at в старых базах (аналог Ensure-PurchaseColumn).</summary>
+    private static void EnsureDealSuppliersRfqSentAtColumn(SqliteConnection connection)
+    {
+        using var pragma = connection.CreateCommand();
+        pragma.CommandText = "PRAGMA table_info(deal_suppliers);";
+        using var reader = pragma.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), "rfq_sent_at", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = "ALTER TABLE deal_suppliers ADD COLUMN rfq_sent_at TEXT;";
+        alter.ExecuteNonQuery();
+    }
+
     public static void SetDealArchived(long dealId, bool archived)
     {
         if (dealId <= 0)

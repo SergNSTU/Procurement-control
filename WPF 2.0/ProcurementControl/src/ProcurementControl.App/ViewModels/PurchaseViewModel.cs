@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
@@ -1121,6 +1122,241 @@ public partial class PurchaseViewModel : ObservableObject
         {
             MessageBox.Show(ex.Message, "RFQ из Bitrix");
         }
+    }
+
+    /// <summary>
+    /// «Заказ переработчику» (меню ⋯): номер заказа из ЕРП → приложение
+    /// обновляет шаблон задачи «Заказ переработчику» (название по образцу
+    /// «Заказ переработчику № X // сделка / клиент / изделие», срок +N дней,
+    /// чистка файлов прошлой сделки; клиент/изделие — из связанной задачи
+    /// расчёта), открывает папку сделки и форму создания задачи с шаблоном.
+    /// Файлы пользователь выбирает в папке сделки сам и перетаскивает
+    /// в форму; задачу создаёт кнопкой «Создать» в Битриксе.
+    /// </summary>
+    [RelayCommand]
+    private async Task CreateRecyclerOrderAsync()
+    {
+        try
+        {
+            var deal = SelectedDeal;
+            if (deal is null)
+            {
+                MessageBox.Show("Выберите сделку.", "Заказ переработчику");
+                return;
+            }
+
+            var config = BitrixRepository.GetConfig();
+            if (!config.IsConfigured || string.IsNullOrWhiteSpace(config.WebhookToken))
+            {
+                throw new InvalidOperationException("Bitrix не настроен: нет вебхука (bitrix_webhook_token).");
+            }
+
+            var numberDialog = new InputDialogWindow(
+                "Заказ переработчику",
+                "Номер заказа переработчику в ЕРП для сделки " + deal.DealNumber + "\n" +
+                "например TRPR-000139")
+            { Owner = Application.Current.MainWindow };
+            if (numberDialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var orderNumber = numberDialog.Value;
+            if (orderNumber.Length == 0)
+            {
+                MessageBox.Show("Номер заказа не введён.", "Заказ переработчику");
+                return;
+            }
+
+            var options = BitrixRepository.GetRecyclerOrderOptions();
+
+            // Клиент и изделие берём из названия задачи расчёта (связанной или
+            // найденной по номеру); без неё — клиент из сделки, изделие опускаем.
+            var client = deal.Client?.Trim() ?? string.Empty;
+            var item = string.Empty;
+            var linkedTaskId = BitrixRepository.GetTaskIdForDeal(deal.Id);
+            if (linkedTaskId <= 0)
+            {
+                ProgressService.Begin("Bitrix: поиск задачи расчёта " + deal.DealNumber + "…");
+                BitrixTaskSearchResult search;
+                try
+                {
+                    search = await BitrixService.FindTaskByRequestNumberAsync(config, deal.DealNumber);
+                }
+                finally
+                {
+                    ProgressService.End();
+                }
+
+                if (search.Task is not null)
+                {
+                    BitrixRepository.LinkTask(deal.Id, search.Task.TaskId, "rfq_pipeline");
+                    linkedTaskId = search.Task.TaskId;
+                }
+            }
+
+            if (linkedTaskId > 0)
+            {
+                ProgressService.Begin("Bitrix: чтение задачи " + linkedTaskId + "…");
+                string sourceTitle;
+                try
+                {
+                    sourceTitle = await BitrixService.GetTaskTitleAsync(config, linkedTaskId);
+                }
+                finally
+                {
+                    ProgressService.End();
+                }
+
+                var parts = BitrixService.ParseTaskTitle(sourceTitle);
+                if (parts is not null)
+                {
+                    if (parts.Client.Length > 0)
+                    {
+                        client = parts.Client;
+                    }
+
+                    item = parts.ItemDescription;
+                }
+            }
+
+            var taskTitle = BuildRecyclerTaskTitle(orderNumber, deal.DealNumber, client, item);
+
+            // Дубли: в группе уже может лежать задача по этой сделке — Titles
+            // в группе разные, ищем вхождение номера сделки.
+            ProgressService.Begin("Bitrix: проверка дублей в группе…");
+            List<BitrixTaskInfo> groupTasks;
+            try
+            {
+                groupTasks = await BitrixService.GetGroupTasksAsync(config, options.GroupId);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            var existing = groupTasks
+                .Where(task => task.Title.Contains(deal.DealNumber, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (existing.Count > 0
+                && MessageBox.Show(
+                    "В группе «Внесение документов в ЕРП» уже есть задача по сделке " + deal.DealNumber + ":\r\n\r\n" +
+                    string.Join("\r\n", existing.Select(task => task.Title)) +
+                    "\r\n\r\nСоздать ещё одну?",
+                    "Заказ переработчику", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            // Шаблон задачи обновляется под текущий заказ: название, срок +N
+            // дней, чистка файлов прошлой сделки. Задачу создаёт сам
+            // пользователь в открывшейся форме — приложение только готовит её.
+            ProgressService.Begin("Bitrix: обновление шаблона «Заказ переработчику»…");
+            var templateUpdated = false;
+            try
+            {
+                try
+                {
+                    await BitrixService.UpdateTemplateAsync(config, options.TemplateId, new Dictionary<string, object>
+                    {
+                        ["TITLE"] = taskTitle,
+                        ["DEADLINE_AFTER"] = options.DeadlineDays * 24 * 3600,
+                        ["UF_TASK_WEBDAV_FILES"] = new List<object>(),
+                    });
+                    templateUpdated = true;
+                }
+                catch (Exception ex)
+                {
+                    // Полный набор полей мог не приняться — пробуем минимум.
+                    ErrorLog.Append("bitrix", "обновление шаблона " + options.TemplateId + " (полные поля): " + ex.Message);
+                    await BitrixService.UpdateTemplateAsync(config, options.TemplateId, new Dictionary<string, object>
+                    {
+                        ["TITLE"] = taskTitle,
+                    });
+                    templateUpdated = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("bitrix", "обновление шаблона " + options.TemplateId + ": " + ex.Message);
+            }
+            finally
+            {
+                ProgressService.End();
+            }
+
+            // Папка сделки открывается рядом с формой: пользователь сам
+            // выбирает нужные файлы и перетаскивает их в задачу (файлы через
+            // URL форма принять не может — ограничение браузера).
+            var problems = new List<string>();
+            try
+            {
+                var dealFolder = Path.Combine(PurchaseDocumentsStore.GetDocumentsRoot(), deal.DealNumber.Trim());
+                if (Directory.Exists(dealFolder))
+                {
+                    Process.Start(new ProcessStartInfo(dealFolder)
+                    {
+                        UseShellExecute = true,
+                    });
+                }
+                else
+                {
+                    problems.Add("папка сделки не найдена: " + dealFolder);
+                }
+            }
+            catch (Exception ex)
+            {
+                problems.Add("открытие папки сделки: " + ex.Message);
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(BitrixService.GetTemplateFormUrl(config, options.TemplateId))
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.Append("bitrix", "открытие формы задачи: " + ex.Message);
+                MessageBox.Show(
+                    "Не удалось открыть форму Битрикса в браузере: " + ex.Message +
+                    "\r\nОткройте вручную: " + BitrixService.GetTemplateFormUrl(config, options.TemplateId),
+                    "Заказ переработчику");
+            }
+
+            StatusText = templateUpdated
+                ? "Форма «Заказ переработчику» открыта: выберите файлы в папке сделки, перенесите их в задачу и нажмите «Создать»"
+                : "Форма «Заказ переработчику» открыта (шаблон обновить не удалось — поправьте название вручную)";
+            ToastService.Show(StatusText, templateUpdated ? ToastKind.Success : ToastKind.Warn);
+            if (problems.Count > 0)
+            {
+                MessageBox.Show(
+                    "Форма открыта, но при подготовке были проблемы:\r\n\r\n" + string.Join("\r\n", problems),
+                    "Заказ переработчику", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Заказ переработчику");
+        }
+    }
+
+    /// <summary>Название по образцу: «Заказ переработчику № X // сделка / клиент / изделие».</summary>
+    private static string BuildRecyclerTaskTitle(string orderNumber, string dealNumber, string client, string item)
+    {
+        var title = "Заказ переработчику № " + orderNumber.Trim() + " // " + dealNumber.Trim();
+        if (!string.IsNullOrWhiteSpace(client))
+        {
+            title += " / " + client.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(item))
+        {
+            title += " / " + item.Trim();
+        }
+
+        return title;
     }
 
     /// <summary>

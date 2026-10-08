@@ -29,6 +29,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -150,8 +151,178 @@
             </Border>
         </Grid>
 
+        <!-- Компактные графики: сумма заказов по месяцам по направлениям -->
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Сборки -->
+            <Border Grid.Column="0" Style="{StaticResource CardStyle}" Margin="0,0,8,0" MinWidth="380">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center"
+                                   Foreground="{StaticResource MutedBrush}" FontSize="12">
+                            <Run Text="Итого за год: "/><Run Text="{Binding AssembliesYearTotal, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="Сборки: сумма заказов по месяцам, $"/>
+                    </DockPanel>
+                    <Grid>
+                        <ItemsControl ItemsSource="{Binding AssemblyBars}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="1"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="1,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="112"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Border Grid.Row="0" VerticalAlignment="Bottom" Height="1"
+                                                Background="{StaticResource LineBrush}"/>
+                                        <Rectangle Grid.Row="0" Width="26" VerticalAlignment="Bottom"
+                                                   Height="{Binding BarHeight}" RadiusX="3" RadiusY="3"
+                                                   ToolTip="{Binding Tooltip}">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Fill" Value="{StaticResource PrimaryBrush}"/>
+                                                    <Setter Property="Opacity" Value="0.45"/>
+                                                    <Style.Triggers>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding IsHighlighted}" Value="True"/>
+                                                                <Condition Binding="{Binding HasData}" Value="True"/>
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Opacity" Value="1"/>
+                                                        </MultiDataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+                                        <TextBlock Grid.Row="1" Text="{Binding Label}" FontSize="10"
+                                                   HorizontalAlignment="Center" Margin="0,3,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="{Binding AmountsHintText}" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" FontSize="11"
+                                   Foreground="{StaticResource MutedBrush}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShowAmountsHint}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Компоненты -->
+            <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="8,0,0,0" MinWidth="380">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center"
+                                   Foreground="{StaticResource MutedBrush}" FontSize="12">
+                            <Run Text="Итого за год: "/><Run Text="{Binding ComponentsYearTotal, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="Компоненты: сумма заказов по месяцам, $"/>
+                    </DockPanel>
+                    <Grid>
+                        <ItemsControl ItemsSource="{Binding ComponentBars}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="1"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="1,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="112"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Border Grid.Row="0" VerticalAlignment="Bottom" Height="1"
+                                                Background="{StaticResource LineBrush}"/>
+                                        <Rectangle Grid.Row="0" Width="26" VerticalAlignment="Bottom"
+                                                   Height="{Binding BarHeight}" RadiusX="3" RadiusY="3"
+                                                   ToolTip="{Binding Tooltip}">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Fill" Value="{StaticResource AmberBrush}"/>
+                                                    <Setter Property="Opacity" Value="0.45"/>
+                                                    <Style.Triggers>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding IsHighlighted}" Value="True"/>
+                                                                <Condition Binding="{Binding HasData}" Value="True"/>
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Opacity" Value="1"/>
+                                                        </MultiDataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+                                        <TextBlock Grid.Row="1" Text="{Binding Label}" FontSize="10"
+                                                   HorizontalAlignment="Center" Margin="0,3,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="{Binding AmountsHintText}" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" FontSize="11"
+                                   Foreground="{StaticResource MutedBrush}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShowAmountsHint}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
         <!-- История за 6 месяцев -->
-        <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="0" Margin="0,14,0,0">
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}" Padding="0" Margin="0,14,0,0">
             <!-- Обрезка по скруглению карточки (чтобы углы таблицы не выпирали) -->
             <Border CornerRadius="10" Background="Transparent" local:RoundedClip.Radius="10">
                 <DataGrid BorderThickness="0"

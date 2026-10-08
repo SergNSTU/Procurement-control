@@ -165,6 +165,9 @@
                         <Separator/>
                         <MenuItem Header="Проверить почту поставщиков" Command="{Binding CheckMailCommand}"/>
                         <MenuItem Header="Проверить приход со склада" Command="{Binding CheckWarehouseCommand}"/>
+                        <MenuItem Header="Заказ переработчику в Битрикс…"
+                                  Command="{Binding CreateRecyclerOrderCommand}"
+                                  ToolTip="Создать задачу «Заказ переработчику» в группе «Внесение документов в ЕРП»: номер заказа из ЕРП, документы сделки вложением"/>
                         <MenuItem Header="Обновить список" Command="{Binding ReloadCommand}"/>
                     </ContextMenu>
                 </Button.ContextMenu>
@@ -200,7 +203,45 @@
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Сделка" Binding="{Binding DealNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="DealNumber" Width="190" CellStyle="{StaticResource EditableDealCellStyle}"/>
+                        <!-- Сделка + пузырёк «пришло RRFQ» (2/3): SortMemberPath сохранён,
+                             поэтому правка номера по двойному щелчку работает как раньше. -->
+                        <DataGridTemplateColumn Header="Сделка" SortMemberPath="DealNumber" Width="240" CellStyle="{StaticResource EditableDealCellStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding DealNumber}" VerticalAlignment="Center" Padding="8,0,6,0"/>
+                                        <Border CornerRadius="9" Padding="7,1" VerticalAlignment="Center" Margin="0,0,6,0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="#E3E6EC"/>
+                                                    <Setter Property="ToolTip" Value="RRFQ от поставщиков ещё не было"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RrfqState}" Value="Partial">
+                                                            <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+                                                            <Setter Property="ToolTip" Value="Пришло RRFQ: не от всех поставщиков. Можно ждать остальные."/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding RrfqState}" Value="Done">
+                                                            <Setter Property="Background" Value="{StaticResource SuccessBrush}"/>
+                                                            <Setter Property="ToolTip" Value="Пришли RRFQ от всех поставщиков — можно передавать в сравнение RRFQ"/>
+                                                        </DataTrigger>
+                                                        <!-- Пузырёк — только для сделок на этапе RFQ -->
+                                                        <DataTrigger Binding="{Binding ShowRfqBubble}" Value="False">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding RrfqText}" FontSize="11" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <TextBox Text="{Binding DealNumber, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="Кол-во плат" Binding="{Binding BoardCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="BoardCount" Width="92" CellStyle="{StaticResource EditableDealCellStyle}"/>
                         <DataGridTextColumn Header="Клиент" Binding="{Binding Client, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SortMemberPath="Client" Width="150" CellStyle="{StaticResource EditableDealCellStyle}"/>
 

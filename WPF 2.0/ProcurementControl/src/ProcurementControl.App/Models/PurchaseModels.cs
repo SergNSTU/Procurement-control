@@ -72,6 +72,20 @@ public sealed class PurchaseDealRow
     public int ReceiptCount { get; set; }
     public string CompletionReceiptDate { get; set; } = string.Empty;
 
+    /// <summary>Пришло RRFQ: поставщики с документом RRFQ + непривязанные файлы (подзапрос rrfq).</summary>
+    public int RrfqCount { get; set; }
+
+    /// <summary>Текст пузырька «пришло RRFQ»: «2/3»; если поставщиков нет — просто «2».</summary>
+    public string RrfqText => SupplierCount > 0 ? RrfqCount + "/" + SupplierCount : RrfqCount.ToString();
+
+    /// <summary>Done — прислали все поставщики (можно в сравнение), Partial — часть, None — пусто.</summary>
+    public string RrfqState => RrfqCount == 0
+        ? "None"
+        : SupplierCount > 0 && RrfqCount >= SupplierCount ? "Done" : "Partial";
+
+    /// <summary>Пузырёк «пришло RRFQ» показывается только у сделок на этапе RFQ и только когда есть что показать.</summary>
+    public bool ShowRfqBubble => RrfqText != "0" && Status.Trim() == "RFQ";
+
     /// <summary>Колонка «Оплачено»: "оплачено/поставщики".</summary>
     public string PaymentText => PaidCount + "/" + SupplierCount;
 

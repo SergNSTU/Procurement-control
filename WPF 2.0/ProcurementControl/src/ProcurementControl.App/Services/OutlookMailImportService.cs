@@ -48,8 +48,12 @@ public static class OutlookMailImportService
     private const string ProcessedKey = "mail.import.processed.v1";
     private const int MaxProcessedEntries = 400;
 
-    /// <summary>Окно первой проверки: сколько назад смотреть письма.</summary>
-    private static readonly TimeSpan FirstRunWindow = TimeSpan.FromHours(48);
+    /// <summary>Окно догоняющего скана: сколько назад смотреть письма на каждой
+    /// проверке. Повторная загрузка предотвращается дедупликацией по EntryID,
+    /// поэтому окно сознательно широкое — оно накрывает простой приложения и
+    /// зависшие проверки (2026-10-06: прежние «5 минут от прошлой проверки»
+    /// молча теряли письма, пришедшие между проверками).</summary>
+    private static readonly TimeSpan CatchUpWindow = TimeSpan.FromDays(3);
 
     private static readonly object Gate = new();
     private static HashSet<string> _processedEntryIds = new(StringComparer.Ordinal);
@@ -83,14 +87,28 @@ public static class OutlookMailImportService
         var report = new MailImportReport();
         // Прогресс виден в статусной строке главного окна: холодный запуск
         // Outlook и обход ящика занимают заметное время.
-        ProgressService.Begin("Импорт почты: проверка ящика " + MailboxName + "…");
-        lock (Gate)
+        ProgressService.Begin("Импорт почты: проверка ящик " + MailboxName + "…");
+        try
         {
+            // Прошлая проверка ещё выполняется (обычно — зависший COM-вызов
+            // Outlook): не копим очередь потоков, а пропускаем такт. Обычная
+            // проверка занимает секунды, поэтому авто-такт подождёт 5 с —
+            // пропуск означает реальное зависание. Письма при этом не теряются:
+            // окно скана догоняет их задним числом.
+            if (!Monitor.TryEnter(Gate, manual ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(5)))
+            {
+                ReportStallStart("Проверка почты не выполняется: предыдущая проверка ещё работает (" +
+                    (manual ? "ждали 30 с" : "такт пропущен") + ").");
+                report.Error = "предыдущая проверка почты ещё выполняется";
+                return report;
+            }
+
             try
             {
                 RepairMailImportFileNames();
                 CheckCore(report, manual);
                 _lastLoggedError = null;
+                ReportStallEnd();
             }
             catch (Exception ex)
             {
@@ -107,13 +125,44 @@ public static class OutlookMailImportService
             }
             finally
             {
-                ProgressService.End();
+                Monitor.Exit(Gate);
             }
+        }
+        finally
+        {
+            ProgressService.End();
         }
         return report;
     }
 
     private static string? _lastLoggedError;
+
+    private static DateTime? _stallSince;
+
+    /// <summary>Зависшая проверка: в лог пишем только начало и конец простоя,
+    /// а не каждый пропущенный такт.</summary>
+    private static void ReportStallStart(string message)
+    {
+        if (_stallSince is not null)
+        {
+            return;
+        }
+        _stallSince = DateTime.Now;
+        ErrorLog.Append("mail", new InvalidOperationException(message));
+    }
+
+    private static void ReportStallEnd()
+    {
+        if (_stallSince is not { } since)
+        {
+            return;
+        }
+        _stallSince = null;
+        ErrorLog.Append("mail", new InvalidOperationException(
+            "Предыдущая проверка почты завершилась после простоя " +
+            (DateTime.Now - since).ToString(@"hh\:mm\:ss") +
+            " — письма за время простоя будут догнаны следующим сканом."));
+    }
 
     private static bool _repairDone;
 
@@ -250,19 +299,25 @@ WHERE substr(original_name, 1, @prefix) = 'mailimport_'
 
         var ownAddresses = CollectOwnAddresses(ns);
 
+        // Время начала скана: оно же попадёт в last_check. Если проверка
+        // зависла в COM-вызове Outlook на часы, окно следующей проверки всё
+        // равно накроет письма, пришедшие за время зависания, — раньше они
+        // терялись, потому что last_check двигало временем завершения.
+        var scanStartedAt = DateTime.Now;
+
         var lastCheckText = ReadSetting(LastCheckKey);
-        var firstRun = string.IsNullOrWhiteSpace(lastCheckText);
-        var windowStart = firstRun
-            ? DateTime.Now.Subtract(FirstRunWindow)
-            : (PurchaseFormatting.ParseDate(lastCheckText) ?? DateTime.Now).Subtract(TimeSpan.FromMinutes(5));
+        var windowStart = (PurchaseFormatting.ParseDate(lastCheckText) ?? scanStartedAt).Subtract(CatchUpWindow);
 
         EnsureProcessedLoaded();
         var processed = new List<string>(_processedEntryIds);
 
         // Restrict отбирает свежие письма силами Outlook — без сортировки
         // и перебора всего ящика через COM (заметно быстрее на больших ящиках).
-        var items = inbox.Items.Restrict("[ReceivedTime] >= '" +
-            windowStart.ToString("MM/dd/yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture) + "'");
+        // DASL с UTC-значением, а не Jet «[ReceivedTime] >= 'MM/dd/yyyy …'»:
+        // Jet-литерал парсится по локали, и на русской машине «MM/dd» молча
+        // читается как «dd/MM» — фильтр пропускал месяцы писем вместо окна.
+        var items = inbox.Items.Restrict("@SQL=\"urn:schemas:httpmail:datereceived\" >= '" +
+            windowStart.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "'");
         items.Sort("[ReceivedTime]", true);
         var total = items.Count;
 
@@ -385,7 +440,7 @@ WHERE substr(original_name, 1, @prefix) = 'mailimport_'
 
         _processedEntryIds = new HashSet<string>(processed, StringComparer.Ordinal);
         PurchaseWriteRepository.SetSetting(ProcessedKey, string.Join("|", processed.TakeLast(MaxProcessedEntries)));
-        PurchaseWriteRepository.SetSetting(LastCheckKey, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        PurchaseWriteRepository.SetSetting(LastCheckKey, scanStartedAt.ToString("yyyy-MM-dd HH:mm:ss"));
     }
 
     /// <summary>Активные сделки тем же правилом, что и фильтр «Активные» на странице.</summary>

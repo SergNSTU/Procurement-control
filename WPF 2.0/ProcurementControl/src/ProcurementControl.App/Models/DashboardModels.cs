@@ -35,6 +35,22 @@ public sealed class DirectionMetrics
 /// <summary>Сумма поставщика, привязанная к конкретной сделке.</summary>
 public sealed record DashboardSupplierAmountRow(long DealId, string AmountUsd);
 
+/// <summary>Сумма заказов за один месяц выбранного года (для графика дашборда).</summary>
+public sealed class DashboardMonthlyAmountRow
+{
+    public DateTime MonthStart { get; init; }
+    public int Month { get; init; }
+    public string Label { get; init; } = string.Empty;
+    /// <summary>Заказы за месяц имеют смысл только с даты начала отслеживания.</summary>
+    public bool HasOrderData { get; init; }
+    public decimal AssemblyAmountUsd { get; init; }
+    public decimal ComponentAmountUsd { get; init; }
+}
+
+/// <summary>Готовый к отрисовке столбец компактного графика дашборда.</summary>
+public sealed record MonthlyBar(
+    string Label, string Tooltip, double BarHeight, bool IsHighlighted, bool HasData);
+
 /// <summary>Строка месячной истории дашборда.</summary>
 public sealed class MonthHistoryRow
 {
@@ -56,4 +72,5 @@ public sealed class DashboardData
     public DirectionMetrics Assemblies { get; init; } = new();
     public DirectionMetrics Components { get; init; } = new();
     public IReadOnlyList<MonthHistoryRow> History { get; init; } = Array.Empty<MonthHistoryRow>();
+    public IReadOnlyList<DashboardMonthlyAmountRow> MonthlyAmounts { get; init; } = Array.Empty<DashboardMonthlyAmountRow>();
 }

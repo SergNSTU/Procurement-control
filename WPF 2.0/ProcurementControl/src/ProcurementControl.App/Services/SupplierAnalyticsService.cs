@@ -359,6 +359,33 @@ WHERE IFNULL(b.source_kind,'')='full_analysis' AND lower(trim(s.supplier))=lower
         return result.OrderByDescending(item => item.Month).ThenByDescending(item => item.PriceCompetitiveness).ToList();
     }
 
+    /// <summary>
+    /// Объём заказов (USD из PI) по поставщикам сделок, заказанных в [start, end).
+    /// Сборки «Китай» исключены; компоненты не учитываются — в component_deals поставщик не хранится.
+    /// </summary>
+    public List<SupplierOrderAmountRow> GetSupplierOrderAmounts(DateTime start, DateTime end)
+    {
+        const string sql = @"
+SELECT ds.supplier, IFNULL(d.ordered_at, ''), IFNULL(ds.pi_amount_usd, '')
+FROM deals d JOIN deal_suppliers ds ON ds.deal_id = d.id
+WHERE IFNULL(d.ordered_at, '') <> '' AND d.ordered_at >= @start AND d.ordered_at < @end
+  AND IFNULL(TRIM(d.assembly_location), '') <> 'Китай';";
+        var result = new List<SupplierOrderAmountRow>();
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        PurchaseWriteRepository.Add(command, "@start", start.ToString("yyyy-MM-dd HH:mm:ss"));
+        PurchaseWriteRepository.Add(command, "@end", end.ToString("yyyy-MM-dd HH:mm:ss"));
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new SupplierOrderAmountRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? string.Empty : Convert.ToString(reader.GetValue(2)) ?? string.Empty));
+        }
+        return result;
+    }
+
     public List<AnalyticsBatchRow> GetBatches(int limit = 200)
     {
         var result = new List<AnalyticsBatchRow>();

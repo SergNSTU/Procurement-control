@@ -94,6 +94,14 @@ public sealed class AnalyticsMonthlyRow
 
 public sealed record AnalyticsFilter(string DateFrom, string DateTo, string Manufacturer, string Supplier, string DealNumber);
 
+/// <summary>Группировка периодов на вкладке «Объёмы» аналитики поставщиков.</summary>
+public enum SupplierVolumeMode { Month, Quarter, Year }
+
+public sealed record SupplierVolumeModeOption(SupplierVolumeMode Value, string Label);
+
+/// <summary>Сырая строка «поставщик — сделка, заказанная в периоде» для сводки объёмов.</summary>
+public sealed record SupplierOrderAmountRow(string Supplier, string OrderedAt, string AmountUsd);
+
 /// <summary>Прозрачные показатели поставщика. Дроби сохраняются рядом с процентами для проверки выборки.</summary>
 public sealed class SupplierOverviewRow
 {

@@ -108,7 +108,8 @@ ORDER BY id DESC";
             }
         }
 
-        // Напоминания сделок (не архив, активные статусы).
+        // Напоминания сделок (не архив, активные статусы). Сделки «Китай»
+        // исключены — для них напоминания отключены (2026-10-05).
         using (var deals = connection.CreateCommand())
         {
             deals.CommandText = @"
@@ -119,6 +120,7 @@ FROM deals
 WHERE IFNULL(archived, 0) = 0
   AND IFNULL(status, '') NOT IN ('Выполнено', 'Не актуально')
   AND IFNULL(reminder_date, '') <> ''
+  AND IFNULL(TRIM(assembly_location), '') <> 'Китай'
 ORDER BY reminder_date, id";
             using var reader = deals.ExecuteReader();
             while (reader.Read())
@@ -142,15 +144,23 @@ ORDER BY reminder_date, id";
             }
         }
 
-        // Ручные напоминания (статус не Done).
+        // Ручные напоминания (статус не Done). Привязанные к китайским
+        // сборкам (напрямую или через поставщика) — исключены.
         using (var reminders = connection.CreateCommand())
         {
             reminders.CommandText = @"
-SELECT id, IFNULL(title, '') AS title, IFNULL(due_date, '') AS due_date,
-       IFNULL(deal_id, 0) AS deal_id, IFNULL(supplier_id, 0) AS supplier_id
-FROM reminders
-WHERE status <> 'Done' AND IFNULL(due_date, '') <> ''
-ORDER BY due_date, id";
+SELECT r.id, IFNULL(r.title, '') AS title, IFNULL(r.due_date, '') AS due_date,
+       IFNULL(r.deal_id, 0) AS deal_id, IFNULL(r.supplier_id, 0) AS supplier_id
+FROM reminders r
+WHERE r.status <> 'Done' AND IFNULL(r.due_date, '') <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM deals d
+      WHERE d.id = r.deal_id AND IFNULL(TRIM(d.assembly_location), '') = 'Китай')
+  AND NOT EXISTS (
+      SELECT 1 FROM deal_suppliers ds
+      JOIN deals d2 ON d2.id = ds.deal_id
+      WHERE ds.id = r.supplier_id AND IFNULL(TRIM(d2.assembly_location), '') = 'Китай')
+ORDER BY r.due_date, r.id";
             using var reader = reminders.ExecuteReader();
             while (reader.Read())
             {

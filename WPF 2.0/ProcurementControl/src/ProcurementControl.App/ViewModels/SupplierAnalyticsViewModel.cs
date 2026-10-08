@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Data;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -11,9 +13,14 @@ namespace ProcurementControl.ViewModels;
 
 public partial class SupplierAnalyticsViewModel : ObservableObject
 {
+    private static readonly CultureInfo Ru = CultureInfo.GetCultureInfo("ru-RU");
+    private static readonly string[] MonthShorts =
+        { "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек" };
     private PurchaseSnapshot? _snapshot;
     private SupplierAnalyticsService? _service;
     private readonly DispatcherTimer _autoRefreshTimer;
+    private DataTable _ordersMatrix = new();
+    private bool _volumesLoaded;
 
     [ObservableProperty] private string _manufacturerSearch = string.Empty;
     [ObservableProperty] private string _supplierSearch = string.Empty;
@@ -42,11 +49,27 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
     public ObservableCollection<AnalyticsBatchRow> FilteredBatches { get; } = new();
     public ObservableCollection<AnalyticsBatchQuoteRow> BatchQuotes { get; } = new();
 
+    // Вкладка «Объёмы»: сумма заказов ($) по поставщикам и периодам
+    [ObservableProperty] private SupplierVolumeModeOption? _selectedVolumeModeOption;
+    [ObservableProperty] private SupplierVolumeMode _selectedVolumeMode = SupplierVolumeMode.Month;
+    [ObservableProperty] private string _volumeSearch = string.Empty;
+    [ObservableProperty] private string _volumeSummary = "Выберите группировку и нажмите «Пересчитать».";
+    public IReadOnlyList<SupplierVolumeModeOption> VolumeGranularities { get; } = new[]
+    {
+        new SupplierVolumeModeOption(SupplierVolumeMode.Month, "По месяцам"),
+        new SupplierVolumeModeOption(SupplierVolumeMode.Quarter, "По кварталам"),
+        new SupplierVolumeModeOption(SupplierVolumeMode.Year, "По годам")
+    };
+
+    /// <summary>Сводка «поставщики × периоды» для DataGrid (AutoGenerateColumns).</summary>
+    public DataView OrdersView => _ordersMatrix.DefaultView;
+
     public SupplierAnalyticsViewModel()
     {
         _autoRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
         _autoRefreshTimer.Tick += (_, _) => RefreshInBackground();
         _autoRefreshTimer.Start();
+        SelectedVolumeModeOption = VolumeGranularities.First();
         Load();
     }
 
@@ -64,6 +87,168 @@ public partial class SupplierAnalyticsViewModel : ObservableObject
 
     partial void OnBatchSearchChanged(string value) => ApplyBatchFilter();
     partial void OnSelectedOverviewChanged(SupplierOverviewRow? value) => LoadResponseAudit(value);
+
+    partial void OnSelectedTabIndexChanged(int value)
+    {
+        // Вкладка «Объёмы» — последняя; данные лениво, при первом открытии.
+        if (value == 4 && !_volumesLoaded) ReloadVolumes();
+    }
+
+    partial void OnSelectedVolumeModeOptionChanged(SupplierVolumeModeOption? value)
+    {
+        if (value is not null) SelectedVolumeMode = value.Value;
+    }
+
+    partial void OnSelectedVolumeModeChanged(SupplierVolumeMode value)
+    {
+        if (_volumesLoaded) ReloadVolumes();
+    }
+
+    partial void OnVolumeSearchChanged(string value) => ApplyVolumeFilter();
+
+    [RelayCommand]
+    private void ReloadVolumes()
+    {
+        try
+        {
+            if (_service is null) throw new InvalidOperationException("Данные ещё не загружены.");
+            var buckets = BuildVolumeBuckets();
+            var sums = new Dictionary<string, decimal[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var raw in _service.GetSupplierOrderAmounts(buckets[0].Start, buckets[^1].End))
+            {
+                var orderedAt = ParseOrderDate(raw.OrderedAt);
+                if (orderedAt is null) continue;
+                var index = IndexOfBucket(buckets, orderedAt.Value);
+                if (index < 0) continue;
+                if (!sums.TryGetValue(raw.Supplier, out var perBucket))
+                {
+                    perBucket = new decimal[buckets.Count];
+                    sums[raw.Supplier] = perBucket;
+                }
+                perBucket[index] += MoneyText.ParseUsd(raw.AmountUsd);
+            }
+
+            var table = new DataTable("supplierVolumes");
+            table.Columns.Add("Поставщик", typeof(string));
+            foreach (var bucket in buckets) table.Columns.Add(bucket.Label, typeof(string));
+            table.Columns.Add("Итого, $", typeof(string));
+
+            var totals = new decimal[buckets.Count];
+            var grandTotal = 0m;
+            foreach (var perBucket in sums.Values)
+            {
+                for (var i = 0; i < perBucket.Length; i++)
+                {
+                    totals[i] += perBucket[i];
+                    grandTotal += perBucket[i];
+                }
+            }
+            table.Rows.Add(TotalRow(table, buckets, totals, grandTotal));
+            foreach (var pair in sums.OrderByDescending(item => item.Value.Sum()).ThenBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                table.Rows.Add(SupplierRow(table, pair.Key, pair.Value, buckets));
+            }
+
+            _ordersMatrix = table;
+            OnPropertyChanged(nameof(OrdersView));
+            ApplyVolumeFilter();
+            _volumesLoaded = true;
+            VolumeSummary = $"Заказы {buckets[0].Label} — {buckets[^1].Label}: {sums.Count} поставщиков, {FormatUsd(grandTotal)} всего. " +
+                "Суммы — USD из PI сделок, заказанных в периоде; компоненты без поставщика в БД не учитываются.";
+            ErrorMessage = string.Empty;
+        }
+        catch (Exception ex) { ErrorMessage = ex.Message; }
+    }
+
+    /// <summary>Последние 12 месяцев / 8 кварталов / 3 года, включая текущий период.</summary>
+    private List<(DateTime Start, DateTime End, string Label)> BuildVolumeBuckets()
+    {
+        var today = DateTime.Today;
+        var buckets = new List<(DateTime Start, DateTime End, string Label)>();
+        switch (SelectedVolumeMode)
+        {
+            case SupplierVolumeMode.Quarter:
+            {
+                var start = new DateTime(today.Year, (today.Month - 1) / 3 * 3 + 1, 1);
+                for (var i = 7; i >= 0; i--)
+                {
+                    var bucketStart = start.AddMonths(-3 * i);
+                    var quarter = (bucketStart.Month - 1) / 3 + 1;
+                    buckets.Add((bucketStart, bucketStart.AddMonths(3), $"{quarter} кв {bucketStart.Year % 100:00}"));
+                }
+                break;
+            }
+            case SupplierVolumeMode.Year:
+            {
+                for (var i = 2; i >= 0; i--)
+                {
+                    var bucketStart = new DateTime(today.Year - i, 1, 1);
+                    buckets.Add((bucketStart, bucketStart.AddYears(1), bucketStart.Year.ToString(Ru)));
+                }
+                break;
+            }
+            default:
+            {
+                var start = new DateTime(today.Year, today.Month, 1);
+                for (var i = 11; i >= 0; i--)
+                {
+                    var bucketStart = start.AddMonths(-i);
+                    buckets.Add((bucketStart, bucketStart.AddMonths(1), $"{MonthShorts[bucketStart.Month - 1]} {bucketStart.Year % 100:00}"));
+                }
+                break;
+            }
+        }
+        return buckets;
+    }
+
+    private static DataRow TotalRow(DataTable table, List<(DateTime Start, DateTime End, string Label)> buckets, decimal[] totals, decimal grandTotal)
+    {
+        var row = table.NewRow();
+        row["Поставщик"] = "Итого";
+        for (var i = 0; i < totals.Length; i++) row[buckets[i].Label] = FormatCell(totals[i]);
+        row["Итого, $"] = FormatCell(grandTotal);
+        return row;
+    }
+
+    private static DataRow SupplierRow(DataTable table, string supplier, decimal[] perBucket, List<(DateTime Start, DateTime End, string Label)> buckets)
+    {
+        var row = table.NewRow();
+        row["Поставщик"] = supplier;
+        var total = 0m;
+        for (var i = 0; i < perBucket.Length; i++)
+        {
+            total += perBucket[i];
+            row[buckets[i].Label] = FormatCell(perBucket[i]);
+        }
+        row["Итого, $"] = FormatCell(total);
+        return row;
+    }
+
+    private static string FormatCell(decimal value) => value == 0m ? string.Empty : FormatUsd(value);
+
+    private static string FormatUsd(decimal value) => value.ToString("N0", Ru);
+
+    private static DateTime? ParseOrderDate(string value)
+    {
+        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)) return date;
+        if (DateTime.TryParse(value, Ru, DateTimeStyles.None, out date)) return date;
+        return null;
+    }
+
+    private static int IndexOfBucket(List<(DateTime Start, DateTime End, string Label)> buckets, DateTime moment)
+    {
+        for (var i = 0; i < buckets.Count; i++)
+        {
+            if (moment >= buckets[i].Start && moment < buckets[i].End) return i;
+        }
+        return -1;
+    }
+
+    private void ApplyVolumeFilter()
+    {
+        var needle = VolumeSearch.Trim().Replace("'", "''");
+        _ordersMatrix.DefaultView.RowFilter = needle.Length == 0 ? string.Empty : $"[Поставщик] LIKE '%{needle}%'";
+    }
 
     [RelayCommand]
     private void Refresh()

@@ -36,6 +36,8 @@ public static class OutlookService
     {
         var mail = Application.CreateItem(0); // olMailItem
         mail.To = to;
+        // Правило исходящей корреспонденции: копия всегда уходит в рабочий ящик comp.
+        mail.Cc = SupplierMailbox;
         mail.Subject = subject;
         mail.Body = body;
         if (attachments is not null)
@@ -67,6 +69,8 @@ public static class OutlookService
     {
         var mail = Application.CreateItem(0); // olMailItem
         mail.To = to;
+        // Копия всегда уходит в ящик comp — рабочий ящик, с которого отправляем.
+        mail.Cc = SupplierMailbox;
         mail.Subject = subject;
         try { mail.SentOnBehalfOfName = SupplierMailbox; }
         catch { /* нет прав или не Exchange — останется ящик по умолчанию */ }

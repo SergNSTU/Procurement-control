@@ -36,6 +36,7 @@ public partial class RfqSendWindow : Window
 
     private readonly string _dealNumber;
     private readonly string _client;
+    private readonly long _dealId;
     private readonly IReadOnlyList<string> _attachments;
     private bool _sending;
 
@@ -46,6 +47,7 @@ public partial class RfqSendWindow : Window
         InitializeComponent();
         _dealNumber = dealNumber;
         _client = client;
+        _dealId = suppliers.FirstOrDefault()?.DealId ?? 0;
         _attachments = attachments;
 
         HeaderText.Text = "Сделка " + dealNumber + (string.IsNullOrWhiteSpace(client) ? "" : " (" + client + ")");
@@ -150,6 +152,16 @@ public partial class RfqSendWindow : Window
                         .Replace("{Supplier}", target.Supplier);
                     OutlookService.CreateSupplierRfqDraft(target.Email.Trim(), _dealNumber, body, _attachments);
                     created++;
+                }
+
+                // Фиксируем момент рассылки для напоминаний «нет ответа на RFQ» (48 рабочих часов).
+                if (_dealId > 0)
+                {
+                    PurchaseWriteRepository.SetSuppliersRfqSentAt(
+                        _dealId,
+                        targets.Select(t => (t.SupplierId, t.Supplier)).ToList(),
+                        DateTime.Now,
+                        "Черновиков: " + created);
                 }
 
                 CreatedDrafts = created;

@@ -487,6 +487,86 @@ public static class PurchaseLogic
         items.Add(AutoItem(row, severity, title, dueDate, key));
     }
 
+    /// <summary>Сколько рабочих часов прошло с момента (суббота и воскресенье не считаются).</summary>
+    public static bool IsWorkingHoursElapsed(DateTime start, double hours, DateTime now)
+        => AddWorkingHours(start, hours) <= now;
+
+    /// <summary>Добавляет часы к моменту, пропуская выходные дни целиком (пн-пт = круглые сутки).</summary>
+    public static DateTime AddWorkingHours(DateTime start, double hours)
+    {
+        var remaining = TimeSpan.FromHours(hours);
+        var current = start;
+        while (remaining > TimeSpan.Zero)
+        {
+            if (current.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            {
+                current = current.Date.AddDays(1);
+                continue;
+            }
+            var dayEnd = current.Date.AddDays(1);
+            var available = dayEnd - current;
+            if (available >= remaining)
+            {
+                current += remaining;
+                remaining = TimeSpan.Zero;
+            }
+            else
+            {
+                remaining -= available;
+                current = dayEnd;
+            }
+        }
+        return current;
+    }
+
+    /// <summary>
+    /// Пункты «нет ответа на RFQ»: поставщику разослан RFQ (rfq_sent_at),
+    /// прошло 48 рабочих часов (выходные не считаются), а RRFQ от него нет.
+    /// Предлагают отправить пуш-письмо поставщику.
+    /// </summary>
+    public static List<ActionItemRow> BuildRfqFollowUpItems(
+        IReadOnlyList<RfqFollowUpRow> rows,
+        DateTime now,
+        IReadOnlySet<string>? suppressedKeys)
+    {
+        var items = new List<ActionItemRow>();
+        foreach (var row in rows)
+        {
+            var sentAt = PurchaseFormatting.ParseDate(row.RfqSentAt);
+            if (sentAt is null)
+            {
+                continue;
+            }
+
+            var due = AddWorkingHours(sentAt.Value, 48);
+            if (due > now)
+            {
+                continue;
+            }
+
+            var title = $"{row.DealNumber} / {row.Supplier}: нет ответа на RFQ (отправлен {sentAt.Value:dd.MM HH:mm}) — пора напомнить";
+            var key = AutomaticReminderKey(row.DealId, row.SupplierId, title);
+            if (suppressedKeys?.Contains(key) == true)
+            {
+                continue;
+            }
+
+            items.Add(new ActionItemRow
+            {
+                DealId = row.DealId,
+                SupplierId = row.SupplierId,
+                Severity = "Attention",
+                Title = title,
+                DueDate = due.ToString("dd.MM.yyyy"),
+                Source = "auto",
+                SuppressionKey = key,
+                DealNumber = row.DealNumber,
+                SupplierName = row.Supplier,
+            });
+        }
+        return items;
+    }
+
     public static string AutomaticReminderKey(long dealId, long supplierId, string title)
         => $"auto:{dealId}:{supplierId}:{title}";
 

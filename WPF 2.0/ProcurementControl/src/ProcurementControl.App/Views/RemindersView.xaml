@@ -38,6 +38,11 @@
                     Style="{StaticResource SecondaryButtonStyle}"
                     Command="{Binding ReminderToOutlookCommand}"
                     Height="30" Width="90" Margin="8,0,0,0"/>
+            <Button Content="Пуш поставщику"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding PushSupplierCommand}"
+                    Height="30" Width="130" Margin="8,0,0,0"
+                    ToolTip="Для пункта «нет ответа на RFQ»: создать в Outlook черновик-напоминание поставщику (Hello dear, Any news?)"/>
             <Button Content="Обновить"
                     Style="{StaticResource SecondaryButtonStyle}"
                     Command="{Binding ReloadCommand}"

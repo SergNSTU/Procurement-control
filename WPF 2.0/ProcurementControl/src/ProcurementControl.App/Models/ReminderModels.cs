@@ -21,6 +21,25 @@ public sealed class ActionItemRow
 
     /// <summary>Стабильный ключ автоматического пункта для ручного удаления.</summary>
     public string SuppressionKey { get; set; } = string.Empty;
+
+    /// <summary>Номер сделки — заполнен у пунктов «нет ответа на RFQ» (для пуша).</summary>
+    public string DealNumber { get; set; } = string.Empty;
+
+    /// <summary>Имя поставщика — заполнено у пунктов «нет ответа на RFQ» (для пуша).</summary>
+    public string SupplierName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Поставщик сделки, которому разослан RFQ (deal_suppliers.rfq_sent_at), но
+/// ответный документ RRFQ от него ещё не пришёл — кандидат на пуш-напоминание.
+/// </summary>
+public sealed class RfqFollowUpRow
+{
+    public long DealId { get; set; }
+    public string DealNumber { get; set; } = string.Empty;
+    public long SupplierId { get; set; }
+    public string Supplier { get; set; } = string.Empty;
+    public string RfqSentAt { get; set; } = string.Empty;
 }
 
 /// <summary>Строка запроса поставщиков для авто-пунктов (строки 1232-1252 оригинала).</summary>

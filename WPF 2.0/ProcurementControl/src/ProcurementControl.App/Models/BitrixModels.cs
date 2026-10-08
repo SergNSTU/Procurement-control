@@ -57,6 +57,23 @@ public sealed class BitrixTaskTitleParts
 }
 
 /// <summary>
+/// Параметры задачи «Заказ переработчику». Задача создаёт сам пользователь
+/// в Битриксе через предзаполненную форму (шаблон id 67 «Заказ
+/// переработчику…»: группа «Внесение документов в ЕРП», исполнитель
+/// Дарья Пономаренко (249), наблюдатель Карина Рахметуллина (25), чек-лист
+/// «Заказы поставщикам»); приложение лишь обновляет шаблон под текущий
+/// заказ и открывает форму. Ключи settings: bitrix.recycler_*.
+/// </summary>
+public sealed record RecyclerOrderOptions(
+    int GroupId,
+    int ResponsibleId,
+    IReadOnlyList<int> AuditorIds,
+    int DeadlineDays,
+    IReadOnlyList<string> ChecklistItems,
+    string DiskFolderName,
+    int TemplateId);
+
+/// <summary>
 /// Строка таблицы импортированных сделок на странице «Bitrix API Test»:
 /// связь bitrix_task_links + данные сделки из deals.
 /// </summary>

@@ -292,30 +292,36 @@ public static class WarehouseArrivalImportService
         }
         report.SavedPath = savedPath;
 
-        // 2. Разобрать файл прихода: номер заказа → даты прибытия его строк.
-        var arrivals = ParseArrivalWorkbook(savedPath);
-
-        // 3. Кандидаты: неархивные сделки, у поставщиков которых в комментарии номер с суффиксом.
-        var candidates = LoadCandidates();
-        var matchCache = new Dictionary<string, List<DateTime?>?>(StringComparer.Ordinal);
-        var erpCache = new Dictionary<long, Dictionary<string, int>>();
-
-        foreach (var candidate in candidates)
+        // 2–3. Разбор файла прихода и сверка с ERP — в ОДНОМ экземпляре Excel.
+        // Прошлый вариант открывал свой Excel на каждый файл (до ~30 за прогон),
+        // и недогашенные экземпляры копились как скрытые EXCEL.EXE с «открытыми
+        // файлами» — Windows ругалась на них при выключении (случай 2026-10-02).
+        dynamic? excel = null;
+        try
         {
-            if (!matchCache.TryGetValue(candidate.Po, out var dates))
-            {
-                dates = FindGroupDates(arrivals, candidate.Po);
-                matchCache[candidate.Po] = dates;
-            }
+            excel = RrfqExcel.OpenExcel();
 
-            var arrived = dates?.Count(date => date is not null) ?? 0;
-            var arrivalDate = dates?.Where(date => date is not null).DefaultIfEmpty(null).Max();
-            if (!erpCache.TryGetValue(candidate.Deal.Id, out var erp))
+            var arrivals = ParseArrivalWorkbook((object)excel, savedPath);
+            var candidates = LoadCandidates();
+            var matchCache = new Dictionary<string, List<DateTime?>?>(StringComparer.Ordinal);
+            var erpCache = new Dictionary<long, Dictionary<string, int>>();
+
+            foreach (var candidate in candidates)
             {
-                erp = LoadErpExpectations(candidate.Deal.Id);
-                erpCache[candidate.Deal.Id] = erp;
-            }
-            var expected = erp.GetValueOrDefault(candidate.Po);
+                if (!matchCache.TryGetValue(candidate.Po, out var dates))
+                {
+                    dates = FindGroupDates(arrivals, candidate.Po);
+                    matchCache[candidate.Po] = dates;
+                }
+
+                var arrived = dates?.Count(date => date is not null) ?? 0;
+                var arrivalDate = dates?.Where(date => date is not null).DefaultIfEmpty(null).Max();
+                if (!erpCache.TryGetValue(candidate.Deal.Id, out var erp))
+                {
+                    erp = LoadErpExpectations(excel, candidate.Deal.Id);
+                    erpCache[candidate.Deal.Id] = erp;
+                }
+                var expected = erp.GetValueOrDefault(candidate.Po);
 
             // «Факт поступл.» синхронизируем с файлом только когда заказ пришёл
             // целиком по ERP. Без ERP-файла неизвестно, всё ли должно прийти, —
@@ -425,9 +431,14 @@ public static class WarehouseArrivalImportService
             });
         }
 
-        report.Lines.Insert(0, "Заказов в работе: " + candidates.Count +
-                                ", с замечаниями: " + report.Issues.Count +
-                                ", «Факт поступл.» записан/исправлен: " + report.FilledFacts);
+            report.Lines.Insert(0, "Заказов в работе: " + candidates.Count +
+                                    ", с замечаниями: " + report.Issues.Count +
+                                    ", «Факт поступл.» записан/исправлен: " + report.FilledFacts);
+        }
+        finally
+        {
+            CloseExcelQuietly(excel);
+        }
 
         PurchaseWriteRepository.SetSetting(LastCheckKey, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
     }
@@ -536,52 +547,45 @@ public static class WarehouseArrivalImportService
     ///    до 16 тыс. колонок, полный Value2 раздувает память.
     /// Ключ словаря — текст ячейки с номером как есть (матчинг — подстрокой).
     /// </summary>
-    internal static Dictionary<string, List<DateTime?>> ParseArrivalWorkbook(string path)
+    internal static Dictionary<string, List<DateTime?>> ParseArrivalWorkbook(dynamic excel, string path)
     {
         var result = new Dictionary<string, List<DateTime?>>(StringComparer.Ordinal);
-        dynamic? excel = null;
+        dynamic workbook = RrfqExcel.OpenWorkbookReadOnly(excel, path);
         try
         {
-            excel = RrfqExcel.OpenExcel();
-            dynamic workbook = RrfqExcel.OpenWorkbookReadOnly(excel, path);
-            try
+            var sheetCount = (int)workbook.Worksheets.Count;
+            for (var index = 1; index <= sheetCount; index++)
             {
-                var sheetCount = (int)workbook.Worksheets.Count;
-                for (var index = 1; index <= sheetCount; index++)
+                dynamic ws = workbook.Worksheets.Item(index);
+                string name;
+                try
                 {
-                    dynamic ws = workbook.Worksheets.Item(index);
-                    string name;
-                    try
-                    {
-                        name = (string)ws.Name;
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    // 1) Четыре листа-«выгрузки» (CE/CT/AE/AT) с группами по номеру.
-                    // 2) Сводные журналы (CE&WE и т.п.) — там заказы, которых
-                    //    нет на листах-выгрузках (находка 2026-10-01).
-                    if (name.IndexOf("materials onlly", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        ReadArrivalSheet(ws, result);
-                    }
-                    else
-                    {
-                        ReadFlatArrivalSheet(ws, result);
-                    }
+                    name = (string)ws.Name;
                 }
-            }
-            finally
-            {
-                workbook.Close(false);
-                RrfqExcel.Release(workbook);
+                catch
+                {
+                    continue;
+                }
+
+                // 1) Четыре листа-«выгрузки» (CE/CT/AE/AT) с группами по номеру.
+                // 2) Сводные журналы (CE&WE и т.п.) — там заказы, которых
+                //    нет на листах-выгрузках (находка 2026-10-01).
+                if (name.IndexOf("materials onlly", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    ReadArrivalSheet(ws, result);
+                }
+                else
+                {
+                    ReadFlatArrivalSheet(ws, result);
+                }
             }
         }
         finally
         {
-            RrfqExcel.CloseExcel(excel);
+            workbook.Close(false);
+            RrfqExcel.Release(workbook);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
         return result;
     }
@@ -937,7 +941,7 @@ public static class WarehouseArrivalImportService
     /// поэтому берём максимум по файлам, а не сумму (иначе «BMZ… (2)» удваивал
     /// заказ: 6+6=12 — находка 2026-10-01).
     /// </summary>
-    private static Dictionary<string, int> LoadErpExpectations(long dealId)
+    private static Dictionary<string, int> LoadErpExpectations(dynamic excel, long dealId)
     {
         var expected = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var document in PurchaseDocumentsStore.GetDocuments(dealId))
@@ -967,7 +971,9 @@ public static class WarehouseArrivalImportService
 
             try
             {
-                foreach (var pair in ReadErpFile(path))
+                // (object) разрывает динамическую диспетчеризацию: иначе pair
+                // становится dynamic и расширения словаря не компилируются.
+                foreach (var pair in ReadErpFile((object)excel, path))
                 {
                     if (pair.Value > expected.GetValueOrDefault(pair.Key))
                     {
@@ -990,32 +996,28 @@ public static class WarehouseArrivalImportService
     /// («ERP_Codes_….xlsx», шапка в 1-й строке, PI в кол. 4). PI Number
     /// протягивается вниз на случай объединённых ячеек.
     /// </summary>
-    private static Dictionary<string, int> ReadErpFile(string path)
+    private static Dictionary<string, int> ReadErpFile(dynamic excel, string path)
     {
         var expected = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        dynamic? excel = null;
+        dynamic workbook = RrfqExcel.OpenWorkbookReadOnly(excel, path);
         try
         {
-            excel = RrfqExcel.OpenExcel();
-            dynamic workbook = RrfqExcel.OpenWorkbookReadOnly(excel, path);
-            try
+            var sheetCount = (int)workbook.Worksheets.Count;
+            for (var index = 1; index <= sheetCount; index++)
             {
-                var sheetCount = (int)workbook.Worksheets.Count;
-                for (var index = 1; index <= sheetCount; index++)
+                var values = ToMatrix((object)workbook.Worksheets.Item(index).UsedRange.Value2);
+                if (values is null || values.GetLength(1) < 2)
                 {
-                    var values = ToMatrix((object)workbook.Worksheets.Item(index).UsedRange.Value2);
-                    if (values is null || values.GetLength(1) < 2)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    var rows = values.GetLength(0);
-                    var cols = values.GetLength(1);
+                var rows = values.GetLength(0);
+                var cols = values.GetLength(1);
 
-                    // Шапка: строка, где рядом есть «ERP-Code» и «PI Number».
-                    var headerRow = -1;
-                    var codeCol = -1;
-                    var piCol = -1;
+                // Шапка: строка, где рядом есть «ERP-Code» и «PI Number».
+                var headerRow = -1;
+                var codeCol = -1;
+                var piCol = -1;
                 for (var row = 0; row < Math.Min(rows, 15) && headerRow < 0; row++)
                 {
                     var code = -1;
@@ -1061,19 +1063,47 @@ public static class WarehouseArrivalImportService
                         expected[currentPi] = expected.GetValueOrDefault(currentPi) + 1;
                     }
                 }
-                }
-            }
-            finally
-            {
-                workbook.Close(false);
-                RrfqExcel.Release(workbook);
             }
         }
         finally
         {
-            RrfqExcel.CloseExcel(excel);
+            workbook.Close(false);
+            RrfqExcel.Release(workbook);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
         return expected;
+    }
+
+    /// <summary>
+    /// Закрытие Excel с гарантированным гашением процесса: до Quit собираем
+    /// мусор, чтобы «хвостовые» COM-обёртки (Worksheets, Range из dynamic)
+    /// не держали процесс живым; после Quit — контрольные сборки. Иначе
+    /// скрытые EXCEL.EXE с открытыми книгами копятся, и Windows при
+    /// выключении жалуется на «незакрытые файлы» (случай 2026-10-02).
+    /// </summary>
+    private static void CloseExcelQuietly(dynamic? excel)
+    {
+        if (excel is null)
+        {
+            return;
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        try
+        {
+            excel.Quit();
+        }
+        catch
+        {
+            // Quit может не удаться на занятом процессе — не критично.
+        }
+        RrfqExcel.Release(excel);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
     }
 
     private static DateTime? ParseDeadline(string value) => PurchaseFormatting.ParseDate(value);

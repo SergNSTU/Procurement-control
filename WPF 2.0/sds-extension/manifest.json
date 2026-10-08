@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "SDS Помощник (Компэл)",
+  "version": "0.4.0",
+  "description": "Помощник по расчётам заказов на sds.compel.ru: авто-распознавание пассива после загрузки BOM, диагностика запросов. Работает внутри вашей сессии сайта.",
+  "content_scripts": [
+    {
+      "matches": ["https://sds.compel.ru/*"],
+      "js": [
+        "content/main.js",
+        "content/sds-rpc.js",
+        "content/passive-parser.js",
+        "content/panel.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/inject.js"],
+      "matches": ["https://sds.compel.ru/*"]
+    }
+  ],
+  "permissions": ["storage"]
+}

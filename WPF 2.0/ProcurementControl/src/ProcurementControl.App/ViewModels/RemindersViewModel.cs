@@ -340,6 +340,50 @@ public partial class RemindersViewModel : ObservableObject
         }
     }
 
+    private const string PushBodyTemplate = "Hello dear,\r\nAny news?";
+
+    /// <summary>
+    /// Пуш поставщику по пункту «нет ответа на RFQ»: черновик письма в Outlook
+    /// (от comp, с подписью) с текстом-напоминанием. Отсчёт 48 рабочих часов
+    /// перезапускается, пункт исчезает до следующего срабатывания.
+    /// </summary>
+    [RelayCommand]
+    private void PushSupplier()
+    {
+        try
+        {
+            var item = SelectedItem ?? throw new InvalidOperationException("Выберите напоминание.");
+            if (item.SupplierId <= 0 || string.IsNullOrWhiteSpace(item.SupplierName) || string.IsNullOrWhiteSpace(item.DealNumber))
+            {
+                throw new InvalidOperationException("Выберите пункт «нет ответа на RFQ».");
+            }
+            if (!OutlookService.IsAvailable)
+            {
+                throw new InvalidOperationException("Outlook не найден на этом компьютере.");
+            }
+
+            var email = SupplierDirectory.FindEmailBySupplier(item.SupplierName)
+                ?? throw new InvalidOperationException(
+                    "Нет адреса поставщика " + item.SupplierName + " в справочнике. Добавьте его в справочник и повторите.");
+
+            OutlookService.CreateSupplierRfqDraft(email, item.DealNumber, PushBodyTemplate, null);
+
+            // Пуш считается новой отправкой: часы напоминания идут заново.
+            PurchaseWriteRepository.SetSuppliersRfqSentAt(
+                item.DealId,
+                new[] { (item.SupplierId, item.SupplierName) },
+                DateTime.Now,
+                "Пуш-напоминание");
+
+            Load();
+            ToastService.Show("Черновик-напоминание создан в Outlook", ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Пуш поставщику");
+        }
+    }
+
     private void Load()
     {
         try
@@ -350,9 +394,11 @@ public partial class RemindersViewModel : ObservableObject
             var suppliers = repo.GetSupplierActionRows();
             var dealReminders = repo.GetDealReminderRows();
             var manuals = repo.GetManualReminderRows();
+            var followUps = repo.GetRfqFollowUpRows();
             var suppressedAutomaticKeys = repo.GetAutomaticReminderSuppressions();
 
             _allItems = PurchaseLogic.BuildActionItems(suppliers, dealReminders, manuals, DateTime.Today, suppressedAutomaticKeys);
+            _allItems.AddRange(PurchaseLogic.BuildRfqFollowUpItems(followUps, DateTime.Now, suppressedAutomaticKeys));
 
             ErrorMessage = string.Empty;
             ApplyFilter();
