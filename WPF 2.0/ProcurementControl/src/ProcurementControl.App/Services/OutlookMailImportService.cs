@@ -30,8 +30,13 @@ public sealed class MailImportReport
 /// </summary>
 public static class OutlookMailImportService
 {
-    /// <summary>Имя хранилища в профиле Outlook, которое смотрит сервис.</summary>
-    public const string MailboxName = "comp@npkexpert.ru";
+    /// <summary>Имя хранилища в профиле Outlook, которое смотрит сервис.
+    /// С 2026-10-16 почта поставщиков приходит в новое хранилище «(tw)».</summary>
+    public const string MailboxName = "comp@npkexpert.ru (tw)";
+
+    /// <summary>Прежнее имя хранилища без суффикса — запасной вариант поиска,
+    /// пока новое хранилище не появилось в профиле или папки ещё не переехали.</summary>
+    public const string LegacyMailboxName = "comp@npkexpert.ru";
 
     /// <summary>
     /// Соответствие почты отправителя и имени поставщика сделки. Ключи в нижнем
@@ -454,17 +459,32 @@ WHERE substr(original_name, 1, @prefix) = 'mailimport_'
             .ToList();
     }
 
-    /// <summary>Входящие ящика comp@npkexpert.ru; запасной вариант — дефолтный ящик.</summary>
-    private static dynamic? FindInbox(dynamic ns)
+    /// <summary>Хранилище ящика comp: новое «comp@npkexpert.ru (tw)», при его
+    /// отсутствии — прежнее «comp@npkexpert.ru». Архив («… - Архив») под точное
+    /// сравнение не попадает.</summary>
+    internal static dynamic? FindStore(dynamic ns)
     {
+        dynamic? legacy = null;
         foreach (dynamic store in ns.Stores)
         {
-            if (string.Equals((string)store.DisplayName, MailboxName, StringComparison.OrdinalIgnoreCase))
+            var name = (string)store.DisplayName;
+            if (string.Equals(name, MailboxName, StringComparison.OrdinalIgnoreCase))
             {
-                return store.GetDefaultFolder(6); // olFolderInbox
+                return store;
+            }
+            if (string.Equals(name, LegacyMailboxName, StringComparison.OrdinalIgnoreCase))
+            {
+                legacy = store;
             }
         }
-        return null;
+        return legacy;
+    }
+
+    /// <summary>Входящие ящика comp@npkexpert.ru (tw); запасной вариант — прежнее хранилище.</summary>
+    private static dynamic? FindInbox(dynamic ns)
+    {
+        dynamic? store = FindStore(ns);
+        return store is null ? null : store.GetDefaultFolder(6); // olFolderInbox
     }
 
     private static HashSet<string> CollectOwnAddresses(dynamic ns)

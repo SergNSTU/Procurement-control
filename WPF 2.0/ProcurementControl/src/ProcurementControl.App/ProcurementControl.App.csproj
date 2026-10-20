@@ -9,7 +9,7 @@
     <RootNamespace>ProcurementControl</RootNamespace>
     <AssemblyName>ProcurementControl.App</AssemblyName>
     <!-- Номер версии показывается в Настройках; повышать при каждой публикации. -->
-    <Version>2.0.25</Version>
+    <Version>2.0.28</Version>
     <ApplicationIcon>Assets\ProcurementControl.ico</ApplicationIcon>
     <!-- Start-WPF.bat запускает portable-сборку без установленного .NET. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

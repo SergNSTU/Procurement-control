@@ -108,7 +108,7 @@ public sealed class WarehouseArrivalIssue
 
 /// <summary>
 /// Импорт ежедневного файла прихода компонентов на склад: письма «The CE CT WE
-/// file daily update …» из папки «CE CT WE» ящика comp@npkexpert.ru несут
+/// file daily update …» из папки «CE CT WE» ящика comp@npkexpert.ru (tw) несут
 /// Excel, где по номерам заказов (номер сделки + суффикс поставщика, напр.
 /// «AE26060501EB-002968-C1») перечислены позиции с датами прибытия.
 ///
@@ -241,7 +241,8 @@ public static class WarehouseArrivalImportService
         dynamic? folder = FindArrivalFolder(ns);
         if (folder is null)
         {
-            report.Error = "В ящике " + MailboxName + " нет папки «" + FolderName + "»";
+            report.Error = "Ни в ящике " + MailboxName + ", ни в " +
+                OutlookMailImportService.LegacyMailboxName + " нет папки «" + FolderName + "»";
             return;
         }
 
@@ -443,21 +444,31 @@ public static class WarehouseArrivalImportService
         PurchaseWriteRepository.SetSetting(LastCheckKey, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
     }
 
-    /// <summary>Папка «CE CT WE» в корне хранилища comp@npkexpert.ru.</summary>
+    /// <summary>Папка «CE CT WE» в корне хранилища: сначала новое
+    /// comp@npkexpert.ru (tw), затем прежнее comp@npkexpert.ru (2026-10-16:
+    /// письма склада правилом Outlook пока складываются в старый ящик —
+    /// после появления папки в новом ящике поиск переключится сам).</summary>
     private static dynamic? FindArrivalFolder(dynamic ns)
     {
-        foreach (dynamic store in ns.Stores)
+        var mailboxNames = new[]
         {
-            if (!string.Equals((string)store.DisplayName, MailboxName, StringComparison.OrdinalIgnoreCase))
+            MailboxName, OutlookMailImportService.LegacyMailboxName
+        };
+        foreach (var name in mailboxNames)
+        {
+            foreach (dynamic store in ns.Stores)
             {
-                continue;
-            }
-
-            foreach (dynamic folder in store.GetRootFolder().Folders)
-            {
-                if (string.Equals((string)folder.Name, FolderName, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals((string)store.DisplayName, name, StringComparison.OrdinalIgnoreCase))
                 {
-                    return folder;
+                    continue;
+                }
+
+                foreach (dynamic folder in store.GetRootFolder().Folders)
+                {
+                    if (string.Equals((string)folder.Name, FolderName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return folder;
+                    }
                 }
             }
         }

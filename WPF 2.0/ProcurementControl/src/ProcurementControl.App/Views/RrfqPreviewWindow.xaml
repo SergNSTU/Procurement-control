@@ -1,0 +1,176 @@
+<Window x:Class="ProcurementControl.Views.RrfqPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Preview RRFQ"
+        Width="1500" Height="920" MinWidth="1100" MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        WindowState="Maximized"
+        Background="{StaticResource CanvasBrush}"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <Window.Resources>
+        <!-- Перенос текста в длинных колонках (как в разделе «Сравнение RRFQ») -->
+        <Style x:Key="WrapCell" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="12">
+        <!-- Панель фильтра: те же привязки, что и на вкладке (одно состояние) -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Фильтр:" Width="56"/>
+            <ComboBox Width="190"
+                      ItemsSource="{Binding FilterOptions}"
+                      SelectedIndex="{Binding SelectedFilterIndex, Mode=TwoWay}"/>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Поиск:" Width="52" Margin="12,0,0,0"/>
+            <TextBox Width="240"
+                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button Content="Включить" Width="92" Height="28" Margin="12,0,0,0"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding IncludeSelectedCommand}"/>
+            <Button Content="Исключить" Width="96" Height="28" Margin="8,0,0,0"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Command="{Binding ExcludeSelectedCommand}"/>
+            <Button Content="Закрыть" Width="96" Height="28" Margin="16,0,0,0"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Click="CloseClick"/>
+        </StackPanel>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="55*" MinHeight="180"/>
+                <RowDefinition Height="6"/>
+                <RowDefinition Height="45*" MinHeight="160"/>
+            </Grid.RowDefinitions>
+
+            <!-- Preview: те же Decision-объекты, что и на вкладке -->
+            <DataGrid Grid.Row="0"
+                      ItemsSource="{Binding PreviewRows}"
+                      SelectedItem="{Binding SelectedDecision, Mode=TwoWay}"
+                      SelectionMode="Single"
+                      IsReadOnly="False"
+                      AutoGenerateColumns="False"
+                      FrozenColumnCount="2">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Status}" Value="OK">
+                                <Setter Property="Background" Value="{StaticResource SuccessBrush}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="Нет квот">
+                                <Setter Property="Background" Value="{StaticResource SurfaceAltBrush}"/>
+                                <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="Нет сравнимой цены">
+                                <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridCheckBoxColumn Header="Вкл" Width="44"
+                                            Binding="{Binding Include, UpdateSourceTrigger=PropertyChanged}"/>
+                    <DataGridTextColumn Header="Статус" Width="115" IsReadOnly="True"
+                                        Binding="{Binding Status}"/>
+                    <DataGridTextColumn Header="№" Width="54" IsReadOnly="True"
+                                        Binding="{Binding Row}"/>
+                    <DataGridTextColumn Header="Value" Width="300" IsReadOnly="True"
+                                        Binding="{Binding Value}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                    <DataGridTextColumn Header="PN" Width="200" IsReadOnly="True"
+                                        Binding="{Binding WinnerPN}"/>
+                    <DataGridTextColumn Header="Russian remark" Width="240" IsReadOnly="True"
+                                        Binding="{Binding RussianRemark}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                    <DataGridTextColumn Header="China remark" Width="240" IsReadOnly="True"
+                                        Binding="{Binding ChinaRemark}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                    <DataGridTextColumn Header="D/C" Width="90" IsReadOnly="True"
+                                        Binding="{Binding DC}"/>
+                    <DataGridTextColumn Header="MFG from Russia" Width="150" IsReadOnly="True"
+                                        Binding="{Binding MfgRussia}"/>
+                    <DataGridTextColumn Header="MFG from China" Width="150" IsReadOnly="True"
+                                        Binding="{Binding MfgChina}"/>
+                    <DataGridTextColumn Header="Q-ty in packing" Width="130" IsReadOnly="True"
+                                        Binding="{Binding QtyPacking}"/>
+                    <DataGridTextColumn Header="Q-ty to Buy/pcs" Width="130" IsReadOnly="True"
+                                        Binding="{Binding QtyToBuy}"/>
+                    <DataGridTextColumn Header="Победитель" Width="110" IsReadOnly="True"
+                                        Binding="{Binding WinnerSupplier}"/>
+                    <DataGridTextColumn Header="Почему выбран" Width="170" IsReadOnly="True"
+                                        Binding="{Binding WinnerReason}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                    <DataGridTextColumn Header="Цена" Width="92" IsReadOnly="True"
+                                        Binding="{Binding WinnerPriceText}"/>
+                    <DataGridTextColumn Header="Срок" Width="105" IsReadOnly="True"
+                                        Binding="{Binding WinnerLead}"/>
+                    <DataGridTextColumn Header="Lead time total" Width="128" IsReadOnly="True"
+                                        Binding="{Binding WinnerLeadTotal}"/>
+                    <DataGridTextColumn Header="Все квоты" Width="420" IsReadOnly="True"
+                                        Binding="{Binding QuotesSummary}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                    <DataGridTextColumn Header="Предупреждения" Width="420" IsReadOnly="True"
+                                        Binding="{Binding Warning}"
+                                        ElementStyle="{StaticResource WrapCell}"/>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GridSplitter Grid.Row="1" Height="6" HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="{StaticResource LineBrush}"/>
+
+            <!-- Квоты выбранной позиции: двойной клик или кнопка — победитель -->
+            <Grid Grid.Row="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="36"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal">
+                    <TextBlock Text="Квоты выбранной позиции" Width="188"
+                               VerticalAlignment="Center" Margin="0,0,12,0"
+                               FontFamily="Segoe UI Semibold" FontSize="12"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <Button Content="Сделать победителем" Width="160" Height="28" Margin="0,0,8,0"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Command="{Binding SetWinnerCommand}"/>
+                    <Button Content="Добавить квоту вручную" Width="180" Height="28"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Command="{Binding AddManualQuoteCommand}"/>
+                </StackPanel>
+
+                <DataGrid Grid.Row="1"
+                          ItemsSource="{Binding QuoteDetails}"
+                          SelectedItem="{Binding SelectedQuoteDetail, Mode=TwoWay}"
+                          SelectionMode="Single"
+                          IsReadOnly="True"
+                          AutoGenerateColumns="False"
+                          RowHeight="28"
+                          MouseDoubleClick="QuoteGridMouseDoubleClick">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsWinner}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource SuccessBrush}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Побед." Width="62" Binding="{Binding WinnerMark}"/>
+                        <DataGridTextColumn Header="Поставщик" Width="120" Binding="{Binding Quote.Supplier}"/>
+                        <DataGridTextColumn Header="Цена" Width="96" Binding="{Binding PriceText}"/>
+                        <DataGridTextColumn Header="Срок" Width="100" Binding="{Binding Quote.LeadTime}"/>
+                        <DataGridTextColumn Header="Total" Width="100" Binding="{Binding Quote.LeadTimeTotal}"/>
+                        <DataGridTextColumn Header="PN" Width="200" Binding="{Binding Quote.PN}"/>
+                        <DataGridTextColumn Header="MFG China" Width="140" Binding="{Binding Quote.MfgChina}"/>
+                        <DataGridTextColumn Header="Pack" Width="80" Binding="{Binding Quote.QtyPacking}"/>
+                        <DataGridTextColumn Header="Buy qty" Width="80" Binding="{Binding Quote.QtyToBuy}"/>
+                        <DataGridTextColumn Header="Матчинг" Width="92" Binding="{Binding Quote.MatchStatus}"/>
+                        <DataGridTextColumn Header="Предупреждение" Width="*" Binding="{Binding Quote.Warning}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

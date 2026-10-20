@@ -156,6 +156,9 @@
                     <Button Content="Исключить" Width="96" Height="28" Margin="8,0,0,0"
                             Style="{StaticResource SecondaryButtonStyle}"
                             Command="{Binding ExcludeSelectedCommand}"/>
+                    <Button Content="Развернуть превью" Width="150" Height="28" Margin="16,0,0,0"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            Command="{Binding OpenPreviewWindowCommand}"/>
                 </StackPanel>
 
                 <!-- Preview сверху, квоты выбранной позиции снизу -->
@@ -171,6 +174,7 @@
                               SelectedItem="{Binding SelectedDecision, Mode=TwoWay}"
                               SelectionMode="Single"
                               IsReadOnly="False"
+                              AutoGenerateColumns="False"
                               FrozenColumnCount="2">
                         <!-- Подсветка по статусу (аналог строк 32-43 в RrfqUi.ps1) -->
                         <DataGrid.RowStyle>
@@ -266,6 +270,7 @@
                                   SelectedItem="{Binding SelectedQuoteDetail, Mode=TwoWay}"
                                   SelectionMode="Single"
                                   IsReadOnly="True"
+                                  AutoGenerateColumns="False"
                                   RowHeight="28"
                                   MouseDoubleClick="QuoteGridMouseDoubleClick">
                             <!-- Победитель подсвечен (аналог строк 198-200) -->

@@ -539,6 +539,23 @@ public partial class RrfqViewModel : ObservableObject
 
     private bool CanOpenManualMatch() => _analysis is not null && !IsBusy;
 
+    private Views.RrfqPreviewWindow? _previewWindow;
+
+    /// <summary>Большое окно preview: те же строки и выбор победителя, окно немодальное.</summary>
+    [RelayCommand]
+    private void OpenPreviewWindow()
+    {
+        if (_previewWindow is not null)
+        {
+            _previewWindow.Activate();
+            return;
+        }
+
+        _previewWindow = new Views.RrfqPreviewWindow(this) { Owner = Application.Current?.MainWindow };
+        _previewWindow.Closed += (_, _) => _previewWindow = null;
+        _previewWindow.Show();
+    }
+
     /// <summary>Аналог $btnAddManualQuote: ручной ввод квоты для выбранной строки (строки 6010-6024).</summary>
     [RelayCommand]
     private void AddManualQuote()

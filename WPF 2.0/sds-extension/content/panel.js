@@ -181,7 +181,7 @@
     // --- О ---
     elPanes.about = h('div', { class: 'tabpane', 'data-pane': 'about' },
       h('div', { class: 'row' },
-        h('div', { class: 'nm' }, 'SDS Помощник v0.4.0'),
+        h('div', { class: 'nm' }, 'SDS Помощник v0.4.1'),
         h('div', { class: 'meta' }, 'Расширение для sds.compel.ru. Не связано с другими приложениями; работает только внутри открытой вами сессии сайта.'),
         h('div', { class: 'meta' }, 'Читает: UserFolders/GetData, Search2/Load2, Search2/GetClasses. Меняет (по кнопке): UserFolders/SaveData (выбор кандидата в строке).'),
         h('div', { class: 'meta' }, 'API-версия берётся из data-ver страницы: '),
@@ -569,11 +569,21 @@
       if (!changed) throw new Error('строки не найдены в свежих данных расчёта');
       plog('SaveData: меняю ' + changed + ' строк(и)…');
       return S.api.saveData(state.fid, data).then(function (resp) {
-        state.applying = false;
-        plog('SaveData OK: saveVersion=' + (resp && resp.saveVersion != null ? resp.saveVersion : '?') +
-          ', изменено ' + changed + (failed ? ', не найдено ' + failed : ''), 'ok');
-        setSummary('Готово: применено ' + changed + ' из ' + (changed + failed) + '. Обновляю расчёт…');
-        setTimeout(analyze, 800);
+        // как сайт: подтянуть остатки/цены выбранных позиций
+        var pnids = [];
+        ops.forEach(function (op) { if (op.cand && op.cand.pnid) pnids.push(op.cand.pnid); });
+        var apekDone = pnids.length
+          ? S.api.apek(pnids).then(function () { plog('Apek: остатки/цены запрошены для ' + pnids.length + ' позиций'); })
+            .catch(function (e) { plog('Apek (не критично): ' + e.message); })
+          : Promise.resolve();
+        return apekDone.then(function () {
+          state.applying = false;
+          plog('SaveData OK: saveVersion=' + (resp && resp.saveVersion != null ? resp.saveVersion : '?') +
+            ', изменено ' + changed + (failed ? ', не найдено ' + failed : ''), 'ok');
+          setSummary('Готово: применено ' + changed + ' из ' + (changed + failed) +
+            '. Если страница расчёта не обновилась сама — нажмите F5.');
+          setTimeout(analyze, 800);
+        });
       });
     }).catch(function (e) {
       state.applying = false;

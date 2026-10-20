@@ -101,6 +101,10 @@
     saveData: function (fid, data) {
       return rpc('UserFolders/SaveData', { fid: Number(fid), data: data }, { minGapMs: 500 });
     },
+    // Подгрузка остатков/цен для выбранных pnid (сайт делает это после выбора)
+    apek: function (pnids) {
+      return rpc('UserFolders/Apek', { pnids: pnids }, { minGapMs: 300 });
+    },
     castResolverList: function (items) {
       return rpc('UserFolders/CastResolverList', { items: items }, { minGapMs: 350 });
     }

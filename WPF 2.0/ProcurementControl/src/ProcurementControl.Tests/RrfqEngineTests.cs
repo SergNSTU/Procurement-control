@@ -58,6 +58,21 @@ public class RrfqEngineTests
         Assert.Equal(string.Empty, lead.Warning);
     }
 
+    [Theory]
+    [InlineData("out of stock")]
+    [InlineData("Out of Stock")]
+    [InlineData("no stock")]
+    [InlineData("out-of-stock")]
+    [InlineData("нет в наличии")]
+    [InlineData("нет на складе")]        // содержит «склад», но это НЕ наличие
+    public void ConvertLeadTime_NoStock_IsNotTreatedAsStock(string leadTime)
+    {
+        var lead = RrfqEngine.ConvertLeadTime(leadTime);
+        Assert.Null(lead.Days);
+        Assert.Equal(string.Empty, lead.Total);
+        Assert.Contains("Поставщик без предложения", lead.Warning);
+    }
+
     [Fact]
     public void ConvertLeadTime_WeekRange_AddsLogisticBuffer()
     {
@@ -297,5 +312,32 @@ public class RrfqEngineTests
         Assert.True(RrfqEngine.IsQuoteSelectable(new Quote { UnitPrice = 1.0 }));
         Assert.False(RrfqEngine.IsQuoteSelectable(new Quote { UnitPrice = null }));
         Assert.False(RrfqEngine.IsQuoteSelectable(new Quote { UnitPrice = 1.0, IsPriceComparable = false }));
+    }
+
+    // ----- Строки «out of stock» — не квота -----
+
+    private static SheetData MakeSheet(object?[,] values, int firstRow = 1, int firstCol = 1)
+        => new()
+        {
+            Name = "S",
+            Index = 1,
+            FirstRow = firstRow,
+            FirstCol = firstCol,
+            LastRow = firstRow + values.GetLength(0) - 1,
+            LastCol = firstCol + values.GetLength(1) - 1,
+            Values = values,
+        };
+
+    [Theory]
+    [InlineData("Out of stock", "0.125", true)]
+    [InlineData("0.125", "no stock", true)]
+    [InlineData("OUT OF STOCK", null, true)]
+    [InlineData("нет в наличии", "0.125", true)]
+    [InlineData("0.125", "склад", false)]
+    [InlineData("0.125", "in stock", false)]
+    public void IsNoStockRow_DetectsNoOfferAnywhereInRow(string cellA, string? cellB, bool expected)
+    {
+        var sheet = MakeSheet(new object?[,] { { cellA, cellB } });
+        Assert.Equal(expected, RrfqEngine.IsNoStockRow(sheet, 1));
     }
 }

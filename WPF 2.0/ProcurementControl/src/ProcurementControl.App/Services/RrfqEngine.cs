@@ -18,6 +18,11 @@ public static class RrfqEngine
     private static readonly Regex CurrencyWords = new("usd|eur|rub|rur", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex NumberInText = new(@"\d+(?:[\.,]\d+)?", RegexOptions.Compiled);
 
+    /// <summary>«Нет в наличии» — поставщик не дал предложения, строка не считается квотой.</summary>
+    private static readonly Regex NoStockText = new(
+        @"out[\s\-]*of[\s\-]*stock|no[\s\-]*stock|нет\s+в\s+наличии|нет\s+на\s+складе",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>Читает квоты из одного файла для импорта в «Базу квот».</summary>
     public static List<Quote> ReadQuotesFromWorkbook(string path, string supplier)
     {
@@ -293,6 +298,11 @@ public static class RrfqEngine
         }
 
         var s = raw.ToLowerInvariant().Replace('\u00A0', ' ');
+        if (NoStockText.IsMatch(s))
+        {
+            return new LeadInfo(null, string.Empty, "Поставщик без предложения: " + raw);
+        }
+
         if (Regex.IsMatch(s, "stock|склад"))
         {
             return new LeadInfo(0.0, "stock", string.Empty);
@@ -549,9 +559,29 @@ public static class RrfqEngine
         };
     }
 
-    /// <summary>Аналог Test-QuoteHasAnyData.</summary>
+    /// <summary>
+    /// Аналог Test-QuoteHasAnyData.
+    /// </summary>
     private static bool QuoteHasAnyData(Quote quote)
         => quote.UnitPrice is not null || quote.UnitPriceVat is not null;
+
+    /// <summary>
+    /// True, если в строке указано отсутствие товара («out of stock»/«no stock»):
+    /// поставщик не дал предложения, строка не должна считаться квотой.
+    /// </summary>
+    public static bool IsNoStockRow(SheetData sheet, int row)
+    {
+        for (var col = sheet.FirstCol; col <= sheet.LastCol; col++)
+        {
+            var text = sheet.GetCellText(row, col);
+            if (!string.IsNullOrWhiteSpace(text) && NoStockText.IsMatch(text))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Аналог Add-QuoteWarning.</summary>
     public static void AddQuoteWarning(Quote quote, string message)
@@ -931,6 +961,11 @@ public static class RrfqEngine
 
                         var rowKey = GetFieldText(sheet, map, "Value", row);
                         if (Regex.IsMatch(NormalizeKey(rowKey), "^(TOTAL|ИТОГО)$"))
+                        {
+                            continue;
+                        }
+
+                        if (IsNoStockRow(sheet, row))
                         {
                             continue;
                         }

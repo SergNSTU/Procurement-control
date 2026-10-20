@@ -164,41 +164,47 @@ public class PurchaseLogicTests
     // ----- ComputeMetrics (дедупликация по номеру сделки) -----
 
     [Fact]
-    public void ComputeMetrics_DeduplicatesDealsByNumber_AndCountsTasksAndAttention()
+    public void ComputeMetrics_DeduplicatesDealsByNumber_AndCountsTasks()
     {
         var rows = new[]
         {
             Deal("AE001", "RFQ"),
             Deal("AE001", "RFQ"),                       // дубль номера — считается один раз
-            Deal("AE002", "Заказано", suppliers: 2, confirmed: 1), // attention
+            Deal("AE002", "Заказано", suppliers: 2, confirmed: 1), // активная: подтверждён 1 из 2 счетов
             new PurchaseDealRow { DealNumber = "AE003", Status = "Заказано", Archived = 1, SupplierCount = 1 }, // архив — мимо
         };
         var tasks = new List<CockpitTaskKey> { new() { DealNumber = "AE004", Id = 1 } };
 
-        var (active, overdue, workAndPayment, attention) = PurchaseLogic.ComputeMetrics(rows, tasks);
+        var (active, overdue, workAndPayment, expectingReceipt) = PurchaseLogic.ComputeMetrics(rows, tasks, Array.Empty<SupplierPlanRow>());
 
         Assert.Equal(3, active);                    // AE001 (дубль), AE002, задача AE004
         Assert.Equal(1, workAndPayment);
-        Assert.Equal(1, attention);
+        Assert.Equal(0, expectingReceipt);          // планов поступления нет
         Assert.Equal(0, overdue);
     }
 
     [Fact]
     public void ComputeMetrics_OverdueCountsReceiptsInThePast_ForNotDoneDeals()
     {
-        var rows = new[]
+        var today = DateTime.Today;
+        SupplierPlanRow Plan(long id, string status, string planDate, string actual = "")
+            => new() { DealId = id, DealNumber = "AE" + id, Status = status, ComponentsReceiptDate = planDate, ActualReceiptDate = actual };
+
+        var plans = new[]
         {
-            new PurchaseDealRow { DealNumber = "AE001", Status = "RFQ", CompletionReceiptDate = DateTime.Today.AddDays(-3).ToString("dd.MM.yyyy") },
-            new PurchaseDealRow { DealNumber = "AE002", Status = "Заказано", CompletionReceiptDate = DateTime.Today.AddDays(-1).ToString("dd.MM.yyyy") },
-            new PurchaseDealRow { DealNumber = "AE003", Status = "Done", CompletionReceiptDate = DateTime.Today.AddDays(-1).ToString("dd.MM.yyyy") },
-            new PurchaseDealRow { DealNumber = "AE004", Status = "RFQ", CompletionReceiptDate = DateTime.Today.ToString("dd.MM.yyyy") },
+            Plan(1, "Заказано", today.AddDays(-3).ToString("dd.MM.yyyy")),                              // план прошёл — просрочено
+            Plan(2, "Закупка", today.AddDays(-1).ToString("dd.MM.yyyy")),                               // тоже просрочено
+            Plan(3, "Done", today.AddDays(-1).ToString("dd.MM.yyyy")),                                  // сделка закрыта — мимо
+            Plan(4, "Заказано", today.ToString("dd.MM.yyyy")),                                          // поступает сегодня — не просрочено
+            Plan(2, "Закупка", today.AddDays(-5).ToString("dd.MM.yyyy"), today.ToString("dd.MM.yyyy")), // у сделки 2 есть факт — не просрочено
         };
 
-        var (_, overdue, _, _) = PurchaseLogic.ComputeMetrics(rows, Array.Empty<CockpitTaskKey>());
+        var (_, overdue, _, expectingReceipt) = PurchaseLogic.ComputeMetrics(Array.Empty<PurchaseDealRow>(), Array.Empty<CockpitTaskKey>(), plans);
 
-        // Просрочка: AE001 и AE002 (статус «Заказано» не входит в Done-правило);
-        // AE003 закрыт (Done), AE004 поступает сегодня.
+        // Просрочка: сделки 1 и 2 (3 — Done, 4 — план сегодня, у 2 в другой строке факт);
+        // ожидаем поступления: 1, 2 и 4 (план есть, факта нет).
         Assert.Equal(2, overdue);
+        Assert.Equal(3, expectingReceipt);
     }
 
     // ----- BuildActionItems (перенос Get-PurchaseActionItems) -----
