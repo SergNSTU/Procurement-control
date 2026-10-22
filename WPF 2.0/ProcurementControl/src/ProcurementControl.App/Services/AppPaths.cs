@@ -5,11 +5,13 @@ namespace ProcurementControl.Services;
 /// <summary>
 /// Резолвинг путей к общей папке данных.
 ///
-/// Оригинальное PowerShell-приложение хранит данные в каталоге "data" в корне
-/// портативной сборки (см. app/modules/PurchaseStore.ps1, Get-NotesDataRoot и др.,
-/// которые строят пути от $script:AppRoot). Чтобы WPF-версия работала с теми же
-/// данными, поднимаемся от расположения исполняемого файла вверх до каталога,
-/// содержащего папки "app" и "data".
+/// Приложение хранит данные в каталоге "data" в корне портативной сборки
+/// (data/purchase_control/purchase_control.sqlite). Поднимаемся от расположения
+/// исполняемого файла вверх до каталога, содержащего "data/purchase_control":
+/// в переносимой сборке он лежит рядом с exe, в рабочем пространстве — в корне
+/// воркспейса. Раньше корень определялся по паре папок "app" и "data" (маркер
+/// старой PowerShell-версии); старая версия удалена 2026-10-22, остался поиск
+/// по data/purchase_control.
 /// </summary>
 public static class AppPaths
 {
@@ -40,9 +42,7 @@ public static class AppPaths
         var current = new DirectoryInfo(AppContext.BaseDirectory);
         while (current is not null)
         {
-            bool hasData = Directory.Exists(Path.Combine(current.FullName, "data"));
-            bool hasApp = Directory.Exists(Path.Combine(current.FullName, "app"));
-            if (hasData && hasApp)
+            if (Directory.Exists(Path.Combine(current.FullName, "data", "purchase_control")))
             {
                 _dataRoot = current.FullName;
                 return _dataRoot;

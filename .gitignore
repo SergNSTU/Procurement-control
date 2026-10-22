@@ -5,13 +5,6 @@ data/
 *.sqlite-*
 *.log
 
-# Local diagnostics and screenshots
-app/_*.ps1
-app/_*.png
-app/*.bak*
-app/*.corrupted*
-app/*.before_*.bak
-
 # Editor and operating-system files
 .vscode/
 .idea/
@@ -27,3 +20,8 @@ reports/
 nul
 tmp/**/bin/
 tmp/**/obj/
+
+# Legacy PowerShell version removed 2026-10-22; app/ still on disk until republish
+/app/
+/Start.bat
+/Start.vbs
